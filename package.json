@@ -1,0 +1,25 @@
+{
+  "name": "hermes-ea",
+  "version": "0.1.0",
+  "private": true,
+  "description": "Private AI Executive Assistant, single-tenant, Microsoft 365 connected",
+  "workspaces": [
+    "apps/api",
+    "apps/web",
+    "packages/shared"
+  ],
+  "engines": {
+    "node": ">=22"
+  },
+  "scripts": {
+    "dev": "npm run dev --workspace=apps/api & npm run dev --workspace=apps/web",
+    "dev:api": "npm run dev --workspace=apps/api",
+    "dev:web": "npm run dev --workspace=apps/web",
+    "build": "npm run build --workspace=packages/shared && npm run build --workspace=apps/api && npm run build --workspace=apps/web",
+    "typecheck": "npm run typecheck --workspaces --if-present",
+    "test": "tsx --test apps/api/src/__tests__/*.test.ts",
+    "gen:secrets": "node scripts/gen-secrets.mjs",
+    "db:migrate": "node scripts/migrate.mjs",
+    "test:agent": "tsx apps/api/src/agent/harness.ts"
+  }
+}

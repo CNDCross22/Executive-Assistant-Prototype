@@ -1,0 +1,541 @@
+@import 'tailwindcss';
+
+/*
+  Explicit source paths, not automatic detection.
+
+  Tailwind v4 discovers source files via git, and this repository has no
+  commits yet — so `vite build` scanned nothing and silently emitted a
+  stylesheet with no responsive utilities at all. The dev server worked, which
+  made it invisible until a production build was inspected.
+
+  Never remove this in favour of auto-detection.
+*/
+@source "./**/*.{ts,tsx}";
+@source "../index.html";
+
+/*
+  Ink and brass. A desk, not a dashboard.
+
+  Every colour is a token so all three theme states resolve as a complete set:
+  explicit light, explicit dark, and the unstamped system default.
+*/
+@theme {
+  --font-display: 'Archivo', 'Helvetica Neue', Arial, sans-serif;
+  --font-body: 'Source Serif 4', Georgia, 'Times New Roman', serif;
+  --font-mono: 'IBM Plex Mono', Consolas, monospace;
+}
+
+:root {
+  --ground: #eef1f4;
+  --surface: #ffffff;
+  --surface-2: #f7f9fa;
+  --sunk: #e4eaef;
+  --ink: #111a22;
+  --ink-soft: #35434f;
+  --muted: #64727e;
+  --faint: #93a1ac;
+  --line: #d9e1e7;
+  --line-soft: #e8edf1;
+  --brass: #8a6528;
+  --brass-soft: #f2e9d9;
+  --sage: #3a6650;
+  --sage-bg: #e2ece7;
+  --clay: #94452f;
+  --clay-bg: #f6e4df;
+  --shadow: 0 1px 2px rgb(17 26 34 / 0.04), 0 8px 24px -12px rgb(17 26 34 / 0.12);
+}
+
+@media (prefers-color-scheme: dark) {
+  :root:not([data-theme='light']) {
+    --ground: #0c141c;
+    --surface: #131d27;
+    --surface-2: #17222d;
+    --sunk: #0e1720;
+    --ink: #e6ecf1;
+    --ink-soft: #c0ccd6;
+    --muted: #86949f;
+    --faint: #5f6d78;
+    --line: #223039;
+    --line-soft: #1a242e;
+    --brass: #d0aa6d;
+    --brass-soft: #241d12;
+    --sage: #7fb797;
+    --sage-bg: #16261e;
+    --clay: #d78a70;
+    --clay-bg: #2b1a15;
+    --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+  }
+}
+
+:root[data-theme='dark'] {
+  --ground: #0c141c;
+  --surface: #131d27;
+  --surface-2: #17222d;
+  --sunk: #0e1720;
+  --ink: #e6ecf1;
+  --ink-soft: #c0ccd6;
+  --muted: #86949f;
+  --faint: #5f6d78;
+  --line: #223039;
+  --line-soft: #1a242e;
+  --brass: #d0aa6d;
+  --brass-soft: #241d12;
+  --sage: #7fb797;
+  --sage-bg: #16261e;
+  --clay: #d78a70;
+  --clay-bg: #2b1a15;
+  --shadow: 0 1px 2px rgb(0 0 0 / 0.3), 0 8px 24px -12px rgb(0 0 0 / 0.6);
+}
+
+/*
+  These MUST stay inside @layer base.
+
+  Unlayered CSS beats every layered rule no matter the specificity, and
+  Tailwind v4 ships its utilities inside @layer utilities. When `button { font:
+  inherit }` sat outside a layer it silently outranked every text-size utility
+  applied to a button — so `text-[0.78rem]` on the sidebar tabs did nothing and
+  the labels rendered at the body's 16.5px, wide enough to truncate.
+
+  Nothing here is a "reset" that may be hoisted out of the layer for tidiness.
+*/
+@layer base {
+  * {
+    box-sizing: border-box;
+  }
+
+  html,
+  body,
+  #root {
+    height: 100%;
+    /* A phone viewport is the hard limit. Nothing may widen the document. */
+    max-width: 100%;
+    overflow-x: hidden;
+  }
+
+  body {
+    margin: 0;
+    background: var(--ground);
+    color: var(--ink);
+    font-family: var(--font-body);
+    font-size: 16.5px;
+    line-height: 1.62;
+    -webkit-font-smoothing: antialiased;
+    text-rendering: optimizeLegibility;
+  }
+
+  button,
+  input,
+  textarea {
+    font: inherit;
+    color: inherit;
+  }
+
+  button {
+    cursor: pointer;
+  }
+
+  :focus-visible {
+    outline: 2px solid var(--brass);
+    outline-offset: 2px;
+    border-radius: 3px;
+  }
+}
+
+@media (prefers-reduced-motion: reduce) {
+  *,
+  *::before,
+  *::after {
+    animation-duration: 0.01ms !important;
+    animation-iteration-count: 1 !important;
+    transition-duration: 0.01ms !important;
+    scroll-behavior: auto !important;
+  }
+}
+
+/* --- primitives ----------------------------------------------------------- */
+
+.h-display {
+  font-family: var(--font-display);
+  font-weight: 600;
+  letter-spacing: -0.018em;
+  text-wrap: balance;
+}
+
+.label {
+  overflow-wrap: anywhere;
+  font-family: var(--font-mono);
+  font-size: 10.5px;
+  letter-spacing: 0.11em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+
+.panel {
+  background: var(--surface);
+  border: 1px solid var(--line);
+}
+
+.btn {
+  font-family: var(--font-display);
+  font-weight: 600;
+  font-size: 0.9rem;
+  padding: 10px 18px;
+  border: 1px solid var(--ink);
+  background: var(--ink);
+  color: var(--ground);
+  border-radius: 3px;
+  transition:
+    opacity 0.15s ease,
+    transform 0.1s ease;
+}
+
+.btn:hover:not(:disabled) {
+  opacity: 0.88;
+}
+
+.btn:active:not(:disabled) {
+  transform: translateY(1px);
+}
+
+.btn:disabled {
+  opacity: 0.4;
+  cursor: not-allowed;
+}
+
+.btn-quiet {
+  background: transparent;
+  color: var(--ink);
+  border-color: var(--line);
+}
+
+.btn-quiet:hover:not(:disabled) {
+  border-color: var(--ink-soft);
+  background: var(--surface-2);
+  opacity: 1;
+}
+
+/* --- sidebar -------------------------------------------------------------- */
+
+.thread {
+  display: block;
+  width: 100%;
+  text-align: left;
+  padding: 9px 12px;
+  border-radius: 4px;
+  border: 1px solid transparent;
+  background: transparent;
+  color: var(--ink-soft);
+  font-size: 0.9rem;
+  line-height: 1.35;
+  transition: background 0.12s ease;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  white-space: nowrap;
+}
+
+.thread:hover {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.thread[aria-current='true'] {
+  background: var(--surface);
+  border-color: var(--line);
+  color: var(--ink);
+  box-shadow: var(--shadow);
+}
+
+/* --- inline text actions --------------------------------------------------
+
+  Edit / Forget / Refresh / Hide and friends were all `.label`: 10.5px
+  uppercase mono with no padding, giving a hit area about 11px tall. Fine to
+  read, far too small to tap. The negative margin cancels the padding so the
+  text stays optically where it was while the target grows to a usable size.
+*/
+
+.text-action {
+  font-family: var(--font-mono);
+  font-size: 11px;
+  letter-spacing: 0.09em;
+  text-transform: uppercase;
+  color: var(--muted);
+  background: none;
+  border: none;
+  border-radius: 3px;
+  padding: 6px 8px;
+  margin: -6px -8px;
+  transition:
+    background-color var(--fast) var(--ease),
+    color var(--fast) var(--ease);
+}
+
+.text-action:hover:not(:disabled) {
+  background: var(--surface-2);
+  color: var(--ink);
+}
+
+.text-action:disabled {
+  opacity: 0.45;
+  cursor: not-allowed;
+}
+
+/* --- row actions ----------------------------------------------------------
+
+  Reveal-on-hover, but ONLY where a pointer exists.
+
+  These were plain `opacity-0 group-hover:opacity-100`. A touch device never
+  hovers, so on a phone the delete control was permanently invisible and a
+  conversation could not be removed at all. `@media (hover: hover)` scopes the
+  hiding to devices that can actually reveal it again.
+*/
+
+.row-action {
+  opacity: 1;
+  transition: opacity var(--fast, 0.16s) ease, background-color var(--fast, 0.16s) ease;
+}
+
+.row-action:hover {
+  background: var(--line-soft);
+  color: var(--ink);
+}
+
+@media (hover: hover) and (pointer: fine) {
+  .row-action {
+    opacity: 0;
+  }
+
+  .group:hover .row-action,
+  .row-action:focus-visible {
+    opacity: 1;
+  }
+}
+
+/* --- scrollbars ----------------------------------------------------------- */
+
+.scroll {
+  scrollbar-width: thin;
+  scrollbar-color: var(--line) transparent;
+  overflow-y: auto;
+}
+
+.scroll::-webkit-scrollbar {
+  width: 10px;
+}
+
+.scroll::-webkit-scrollbar-track {
+  background: transparent;
+}
+
+.scroll::-webkit-scrollbar-thumb {
+  background: var(--line);
+  border-radius: 999px;
+  border: 3px solid transparent;
+  background-clip: content-box;
+}
+
+/* --- motion ---------------------------------------------------------------
+
+  One easing curve throughout, and short durations. Motion here is for
+  orientation — showing where a thing came from — not decoration. Everything
+  below collapses to nothing under prefers-reduced-motion.
+*/
+
+:root {
+  --ease: cubic-bezier(0.22, 0.72, 0.28, 1);
+  --fast: 0.16s;
+  --mid: 0.26s;
+  --slow: 0.36s;
+}
+
+/* Theme changes ease rather than snap. */
+body,
+.panel,
+.composer,
+.thread,
+.btn,
+.bubble-user {
+  transition:
+    background-color var(--mid) var(--ease),
+    border-color var(--mid) var(--ease),
+    color var(--mid) var(--ease);
+}
+
+/* --- view transitions --- */
+
+@keyframes view-in {
+  from {
+    opacity: 0;
+    transform: translateY(10px) scale(0.994);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.view-enter {
+  animation: view-in var(--slow) var(--ease) both;
+}
+
+/* --- drawers and sheets --- */
+
+@keyframes slide-from-right {
+  from {
+    transform: translateX(100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes slide-from-left {
+  from {
+    transform: translateX(-100%);
+  }
+  to {
+    transform: none;
+  }
+}
+
+@keyframes scrim-in {
+  from {
+    opacity: 0;
+  }
+  to {
+    opacity: 1;
+  }
+}
+
+.sheet-right {
+  animation: slide-from-right var(--slow) var(--ease) both;
+}
+
+.sheet-left {
+  animation: slide-from-left var(--mid) var(--ease) both;
+}
+
+.scrim {
+  animation: scrim-in var(--mid) var(--ease) both;
+}
+
+/* --- cards arriving --- */
+
+@keyframes card-in {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.card-in {
+  animation: card-in var(--mid) var(--ease) both;
+}
+
+/* --- the view switcher pill --- */
+
+.switch-btn {
+  position: relative;
+  transition:
+    color var(--fast) var(--ease),
+    background-color var(--fast) var(--ease),
+    border-color var(--fast) var(--ease);
+}
+
+.switch-btn:active {
+  transform: scale(0.98);
+}
+
+/* --- interactive lift --- */
+
+.lift {
+  transition:
+    background-color var(--fast) var(--ease),
+    transform var(--fast) var(--ease);
+}
+
+.lift:hover {
+  background: var(--surface-2);
+}
+
+.lift:active {
+  transform: scale(0.995);
+}
+
+/* --- motion --------------------------------------------------------------- */
+
+@keyframes rise {
+  from {
+    opacity: 0;
+    transform: translateY(8px);
+  }
+  to {
+    opacity: 1;
+    transform: none;
+  }
+}
+
+.rise {
+  animation: rise var(--mid) var(--ease) both;
+}
+
+@keyframes pulse-dot {
+  0%,
+  100% {
+    opacity: 0.25;
+    transform: scale(0.85);
+  }
+  50% {
+    opacity: 1;
+    transform: scale(1);
+  }
+}
+
+.thinking-dot {
+  display: inline-block;
+  width: 5px;
+  height: 5px;
+  border-radius: 999px;
+  background: var(--brass);
+  animation: pulse-dot 1.3s ease-in-out infinite;
+}
+
+.thinking-dot:nth-child(2) {
+  animation-delay: 0.18s;
+}
+
+.thinking-dot:nth-child(3) {
+  animation-delay: 0.36s;
+}
+
+/* --- conversation --------------------------------------------------------- */
+
+.bubble-user {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 12px 12px 3px 12px;
+  padding: 11px 16px;
+  box-shadow: var(--shadow);
+  max-width: 82%;
+}
+
+.reply {
+  font-size: 1.02rem;
+  line-height: 1.68;
+  white-space: pre-wrap;
+}
+
+.composer {
+  background: var(--surface);
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  box-shadow: var(--shadow);
+  transition: border-color 0.15s ease;
+}
+
+.composer:focus-within {
+  border-color: var(--brass);
+}
