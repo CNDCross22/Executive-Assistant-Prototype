@@ -32,11 +32,21 @@ const RATES: Record<string, Rate> = {
   local: { input: 0, cachedInput: 0, output: 0 },
 };
 
-function rateFor(model: string): Rate {
+/**
+ * `baseUrl` is a parameter rather than a read of the ambient env so that the
+ * pricing rules can actually be tested.
+ *
+ * It used to read `env.AI_BASE_URL` directly, which made the outcome depend on
+ * the developer's own .env: with the default Ollama URL an unpriced model came
+ * back free, and the test asserting that can never happen failed on any machine
+ * without a configured .env. A guard that only holds on one laptop is not a
+ * guard.
+ */
+function rateFor(model: string, baseUrl: string): Rate {
   if (RATES[model]) return RATES[model]!;
 
   // Local endpoints are free regardless of model name.
-  if (/localhost|127\.0\.0\.1/.test(env.AI_BASE_URL)) return RATES.local!;
+  if (/localhost|127\.0\.0\.1/.test(baseUrl)) return RATES.local!;
 
   // Unknown hosted model: assume the most expensive rate we know so an
   // unpriced model cannot quietly overspend.
@@ -52,8 +62,8 @@ export interface Usage {
 }
 
 /** Cost of one call, in micro-dollars. */
-export function costMicros(model: string, usage: Usage): number {
-  const rate = rateFor(model);
+export function costMicros(model: string, usage: Usage, baseUrl: string = env.AI_BASE_URL): number {
+  const rate = rateFor(model, baseUrl);
   const cached = usage.cachedTokens ?? 0;
   const fresh = Math.max(0, usage.promptTokens - cached);
 

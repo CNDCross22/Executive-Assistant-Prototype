@@ -343,9 +343,30 @@ describe('cost — the budget must be knowable', () => {
     assert.equal(cached, 25_000);
   });
 
+  /*
+    The endpoint is passed explicitly rather than inherited from the ambient
+    env. This test used to pass or fail depending on whether the machine had a
+    .env pointing at a hosted provider — on a clean checkout it read the
+    default Ollama URL, priced the unknown model as free, and failed.
+  */
+  const HOSTED = 'https://api.openai.com/v1';
+
   test('an unknown hosted model is priced pessimistically, never as free', () => {
-    const micros = costMicros('some-new-model', { promptTokens: 1_000_000, completionTokens: 1_000_000 });
+    const micros = costMicros(
+      'some-new-model',
+      { promptTokens: 1_000_000, completionTokens: 1_000_000 },
+      HOSTED,
+    );
     assert.ok(micros > 0, 'an unpriced model must never look free');
+  });
+
+  test('an unknown model on a local endpoint is free', () => {
+    const micros = costMicros(
+      'some-new-model',
+      { promptTokens: 1_000_000, completionTokens: 1_000_000 },
+      'http://localhost:11434/v1',
+    );
+    assert.equal(micros, 0, 'a locally hosted model costs nothing to run');
   });
 });
 
