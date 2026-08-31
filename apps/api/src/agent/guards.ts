@@ -9,6 +9,7 @@
  * against what actually executed. An unbacked claim never reaches the user.
  */
 import type { AgentResult, AgentStep } from './orchestrator.js';
+import { interpretRequest } from './request-intent.js';
 
 /** Capability switches are enforced by the registry; supported requests proceed. */
 export function checkCapability(_message: string): AgentResult | null {
@@ -20,19 +21,7 @@ export function checkCapability(_message: string): AgentResult | null {
  * model-written imitation of one. Deliberately limited to clear action verbs.
  */
 export function isActionRequest(message: string): boolean {
-  const text = message.toLowerCase();
-  const directPatterns = [
-    /\b(add|remove|invite)\b.{0,60}\b(attendee|guest|participant)s?\b/,
-    /\b(add|append|update|change|edit|set|replace)\b.{0,60}\b(note|notes|description|details|body)\b/,
-    /\b(send|reply|respond|forward|draft|compose)\b.{0,60}\b(email|mail|message|reply)?\b/,
-    /\b(create|add|book|schedule|reschedule|update|edit|change|move|remove|delete|cancel|accept|decline|tentatively accept)\b.{0,60}\b(calendar|event|meeting|appointment|invitation)s?\b/,
-    /\b(create|add|update|edit|change|complete|delete|remove)\b.{0,60}\b(task|reminder|to-do|todo)s?\b/,
-    /\b(create|add|update|edit|change|delete|remove)\b.{0,60}\b(contact)s?\b/,
-    /\b(mark|flag|unflag|archive|move|delete)\b.{0,60}\b(email|mail|message|it|this|that)\b/,
-    /\b(turn on|turn off|enable|disable|set|update|change)\b.{0,60}\b(out of office|automatic repl|auto.?repl|working hours|mailbox setting)/,
-    /\b(remember|forget)\b.{0,80}\b(this|that|my|preference|memory|rule|fact|person)\b/,
-  ];
-  return directPatterns.some((pattern) => pattern.test(text)) || isDurableMemoryStatement(message);
+  return interpretRequest(message).operation === 'write' || isDurableMemoryStatement(message);
 }
 
 /** Clear first-person preferences and standing rules deserve a memory preview. */
@@ -122,6 +111,7 @@ const ACTION_WRITE_TOOLS = new Set([
  */
 export function unresolvedActionGoal(history: ActionHistoryTurn[], message: string): string | null {
   if (isActionRequest(message)) return message;
+  if (interpretRequest(message, history).goal === 'mail_summary') return null;
 
   const text = message.trim();
   if (!text || text.length > 240) return null;

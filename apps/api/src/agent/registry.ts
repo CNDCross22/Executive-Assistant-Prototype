@@ -19,9 +19,11 @@ export function availableTools(): Tool<never>[] {
 
 export function toolDefinitions(only?: string[]): ToolDefinition[] {
   const tools = availableTools();
-  const filtered = only && only.length > 0 ? tools.filter((t) => only.includes(t.name)) : tools;
-  // Never leave the model with nothing to call.
-  const chosen = filtered.length > 0 ? filtered : tools;
+  const filtered = only === undefined ? tools : tools.filter((t) => only.includes(t.name));
+  // An explicitly supplied empty allowlist means no tool is permitted. This is
+  // essential for the request-intent boundary; it must never fall back to all
+  // tools merely because routing produced no safe match.
+  const chosen = only === undefined ? tools : filtered;
 
   return chosen.map((t) => ({
     name: t.name,

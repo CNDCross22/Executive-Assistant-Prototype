@@ -59,6 +59,10 @@ Current roles are `fast`, `executive`, `briefing` and reserved `background`. Cur
 
 The model never constructs Microsoft Graph requests. It can only select registered tools whose arguments are validated before execution. Model-written confirmation language, including multiline Yes/No prompts, is rejected unless a real executable approval exists. A short clarification such as a date may retain an unresolved action goal, but it never carries approval: the exact write tool must still create a new approval record. External email content is treated as untrusted data, never as instruction.
 
+Before tools are selected, a deterministic request-intent bridge classifies the current message in conversation context as read, write, or conversation-only and identifies the relevant domain and goal. Read intent physically removes mutating tools from the model request. Follow-up language such as “read them and send me the whole summary” remains a mailbox read, while “send the summary to Carlo” is an external write. Ambiguous requests default to read-only capability.
+
+Whole-Inbox summaries use the bounded `mail_inbox_summary` reader rather than a wildcard search. It reads at most 20 current Inbox messages with bounded Graph concurrency, reports partial-read failures, treats every body as untrusted content, and supplies compact evidence for the executive summary.
+
 After approval, a confirmed Microsoft 365 result is reported independently of approval-audit persistence. If Microsoft Graph returns an ambiguous transport failure, the assistant reports that the outcome is unconfirmed and asks the Director to check Outlook before retrying, preventing accidental duplicates.
 
 ## Executive intelligence

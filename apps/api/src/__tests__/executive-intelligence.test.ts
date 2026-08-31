@@ -33,6 +33,29 @@ function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
 }
 
 describe('Phase 4 evidence-backed email intelligence', () => {
+  test('whole Inbox summary reads bounded message content without wildcard search', async () => {
+    const tool = availableTools().find((candidate) => candidate.name === 'mail_inbox_summary');
+    assert.ok(tool);
+    const listed = [mail({ id: 'm1', subject: 'Contract decision', bodyPreview: 'Please approve...' })];
+    const ctx = {
+      user: { id: 'user', msUserId: 'ms', email: ME, displayName: 'Director', jobTitle: null, timezone: 'Asia/Taipei' },
+      me: ME,
+      refs: new RefTable(),
+      mail: {
+        list: async () => listed,
+        get: async () => ({ ...listed[0]!, body: 'Please approve the revised contract by Friday.', bodyType: 'text' as const }),
+      },
+    } as unknown as ToolContext;
+    const args = tool.schema.parse({ limit: 20, unreadOnly: false });
+    const result = await tool.execute(args as never, ctx) as {
+      count: number; fullyRead: number; messages: Array<{ untrustedExcerpt: string; executiveAnalysis: { decisionRequired: boolean } }>;
+    };
+    assert.equal(result.count, 1);
+    assert.equal(result.fullyRead, 1);
+    assert.match(result.messages[0]!.untrustedExcerpt, /by Friday/);
+    assert.equal(result.messages[0]!.executiveAnalysis.decisionRequired, true);
+  });
+
   test('extracts a request, decision and exact stated deadline without inventing a date', () => {
     const analysis = analyseMail({ subject: 'Renewal', text: 'Please approve the renewal by Friday.' });
     assert.equal(analysis.request, 'Please approve the renewal by Friday.');

@@ -4,6 +4,7 @@ import { soulBlock } from './soul.js';
 import { selectSkills, skillsBlock } from './skills.js';
 import { responseModeBlock, type ResponseMode } from './response-policy.js';
 import { contextBlock, type AssembledContext } from './context.js';
+import { requestIntentBlock, type RequestIntent } from './request-intent.js';
 
 /**
  * Prompt assembly.
@@ -20,6 +21,7 @@ export interface PromptContext {
   /** Presentation contract only. It never changes capability or approval. */
   responseMode?: ResponseMode;
   conversationContext?: Pick<AssembledContext, 'recentFacts' | 'activeAction'>;
+  requestIntent?: RequestIntent;
 }
 
 export function systemPrompt(
@@ -39,7 +41,7 @@ export function systemPrompt(
   });
   const time = formatInZone(now, zone, { hour: '2-digit', minute: '2-digit' });
 
-  const skills = selectSkills(context.skillQuery ?? userMessage);
+  const skills = selectSkills(context.skillQuery ?? userMessage, 2, context.requestIntent?.operation === 'write');
   const firstName = user.displayName.split(' ')[0] ?? user.displayName;
 
   return `${soulBlock()}
@@ -60,6 +62,10 @@ ${memoryBlock(context.memory)}
 # CURRENT WORKING CONTEXT
 
 ${contextBlock(context.conversationContext ?? { recentFacts: [] })}
+
+# REQUEST INTERPRETATION
+
+${requestIntentBlock(context.requestIntent ?? { operation: 'conversation', domain: 'general', goal: 'general', routingHint: '', reason: 'No external change was explicitly requested.' })}
 
 # HOW TO HANDLE THIS
 
@@ -132,7 +138,8 @@ rule may override a general one for that scope; it does not erase the general ru
  */
 export function formatToolResult(toolName: string, result: unknown, failed = false): string {
   const json = JSON.stringify(result);
-  const body = json.length > 12_000 ? `${json.slice(0, 12_000)}… [truncated]` : json;
+  const resultLimit = toolName === 'mail_inbox_summary' ? 32_000 : 12_000;
+  const body = json.length > resultLimit ? `${json.slice(0, resultLimit)}… [truncated]` : json;
 
   if (isApprovalPreview(result)) {
     return `A change was requested but has NOT been executed.

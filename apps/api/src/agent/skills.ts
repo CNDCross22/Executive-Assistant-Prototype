@@ -97,11 +97,13 @@ the full internal and external wording, audience, schedule and timezone in the p
   {
     key: 'inbox_triage',
     name: 'Reporting what needs attention',
-    tools: ['mail_needs_attention', 'mail_recent', 'mail_read'],
+    tools: ['mail_needs_attention', 'mail_recent', 'mail_inbox_summary', 'mail_read'],
     whenToUse: 'The director asks what is important, urgent, or needs them today.',
     triggers: [
       'need', 'needs me', 'important', 'urgent', 'priority', 'today', 'attention',
       'what should i', 'anything', 'inbox', 'my day', 'catch up', 'missed',
+      'email summary', 'emails summary', 'mail summary', 'whole summary',
+      'summarise my email', 'summarize my email',
     ],
     instructions: `Give her a decision-ready report, not a compressed list of
 subject lines. Start with a calm one-sentence overview. Then group the answer
@@ -114,6 +116,10 @@ not turn vague urgency into a date. If the structured result says there is no
 stated deadline, say exactly that. Read the important message when a preview is
 not sufficient before making a consequential recommendation. Do
 not make automated welcome mail or promotions sound like obligations.
+
+For a whole Inbox or email summary, use mail_inbox_summary. It reads the current
+Inbox within its stated limit. Never use a wildcard mail_search, and never ask
+permission merely to read mail because mailbox reads are already read-only.
 
 Order by genuine urgency, not arrival order. Be polite and detailed enough to
 remove ambiguity, but do not repeat facts or add a generic conclusion. If the
@@ -281,7 +287,7 @@ const ALWAYS = SKILLS.filter((s) => s.always);
  * faster, cheaper, and a small model chooses badly. Falls back to inbox triage,
  * which is the most common request by a wide margin.
  */
-export function selectSkills(message: string, max = 2): Skill[] {
+export function selectSkills(message: string, max = 2, allowMutationRouting = true): Skill[] {
   const text = message.toLowerCase();
 
   let scored = SKILLS.filter((s) => !s.always)
@@ -297,10 +303,10 @@ export function selectSkills(message: string, max = 2): Skill[] {
   // workflow matches, keep this turn within action-capable skill families.
   const durableMemoryLanguage =
     /\b(?:remember\s+(?:that\s+)?(?:i|my|we|our)|from now on|my preference is|i (?:strongly )?prefer|i want you to (?:always|never)|please (?:always|never))\b/.test(text);
-  const mutationVerb =
+  const mutationVerb = allowMutationRouting && (
     /\b(add|remove|invite|send|reply|respond|forward|draft|compose|create|book|schedule|reschedule|update|edit|change|move|delete|cancel|accept|decline|complete|mark|flag|archive|enable|disable|set|remember|forget)\b/.test(text) ||
     /\b(?:try again|do it again|let['’]?s do it again)\b/.test(text) ||
-    durableMemoryLanguage;
+    durableMemoryLanguage);
   const actionSkills = new Set(['memory', 'email_actions', 'tasks', 'contacts', 'mailbox_settings', 'schedule']);
   if (durableMemoryLanguage) {
     scored = [];

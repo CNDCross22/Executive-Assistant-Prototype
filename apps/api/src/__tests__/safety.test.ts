@@ -37,6 +37,8 @@ import { formatToolResult } from '../agent/prompt.js';
 import { soulBlock, soulStatus } from '../agent/soul.js';
 import type { MailMessage } from '../graph/mail.service.js';
 import { availableTools } from '../agent/registry.js';
+import { toolDefinitions } from '../agent/registry.js';
+import { interpretRequest, requestIntentBlock } from '../agent/request-intent.js';
 import { normaliseSteps, normaliseStoredApproval } from '../conversations/store.js';
 import { formatCalendarRange } from '../agent/tools/office.tools.js';
 import { organisationDirectoryMatches } from '../graph/user.service.js';
@@ -524,6 +526,44 @@ describe('action approval policy', () => {
     for (const request of mutations) assert.equal(isActionRequest(request), true, request);
     assert.equal(isActionRequest('What is on my calendar tomorrow?'), false);
     assert.equal(isActionRequest('Who emailed me today?'), false);
+    assert.equal(isActionRequest('Sure, read them and send me the whole summary.'), false);
+  });
+
+  test('interprets follow-up reporting language before tools are selected', () => {
+    const history = [
+      { role: 'user' as const, content: 'I wanted to ask about my emails. Can you give me a summary?' },
+      { role: 'assistant' as const, content: 'I need to read the Inbox messages to give you a content summary.' },
+    ];
+    const intent = interpretRequest('Sure, read them and send me the whole summary.', history);
+    assert.equal(intent.operation, 'read');
+    assert.equal(intent.domain, 'mail');
+    assert.equal(intent.goal, 'mail_summary');
+    assert.match(requestIntentBlock(intent), /Only read-only tools are available/);
+    assert.equal(toolDefinitions([]).length, 0, 'an empty safety allowlist must never fall back to every tool');
+  });
+
+  test('distinguishes displaying a summary from sending email externally', () => {
+    assert.equal(interpretRequest('Send me the whole email summary.').operation, 'read');
+    assert.equal(interpretRequest('Send an email summary to Carlo.').operation, 'write');
+    assert.equal(interpretRequest('Send this to Carlo.').operation, 'write');
+    assert.equal(interpretRequest('Read them, summarise them, and draft replies to anything urgent.', [
+      { role: 'user', content: 'These are my Inbox emails.' },
+    ]).operation, 'write');
+  });
+
+  test('routes whole Inbox summaries to the dedicated bounded reader', () => {
+    const selected = selectSkills('Sure, read them and send me the whole summary. inbox email summary catch up', 2, false);
+    const names = toolsForSkills(selected);
+    assert.ok(names.includes('mail_inbox_summary'));
+    const search = availableTools().find((tool) => tool.name === 'mail_search');
+    const summary = availableTools().find((tool) => tool.name === 'mail_inbox_summary');
+    assert.ok(search);
+    assert.ok(summary);
+    assert.equal(search.schema.safeParse({ query: '*', limit: 10 }).success, false);
+    assert.equal(summary.schema.safeParse({ limit: 20, unreadOnly: false }).success, true);
+    assert.equal(summary.schema.safeParse({ limit: 21, unreadOnly: false }).success, false);
+    assert.doesNotMatch(formatToolResult('mail_inbox_summary', { evidence: 'x'.repeat(20_000) }), /\[truncated\]/);
+    assert.match(formatToolResult('mail_search', { evidence: 'x'.repeat(20_000) }), /\[truncated\]/);
   });
 
   test('recognises explicit durable preferences on their first statement', () => {
@@ -641,6 +681,10 @@ describe('action approval policy', () => {
       { role: 'user', content: 'Schedule a meeting with Sarah.' },
       { role: 'assistant', content: 'What date and time should I use?' },
     ], 'Thanks.'), null);
+    assert.equal(unresolvedActionGoal([
+      { role: 'user', content: 'Schedule a meeting with Sarah.' },
+      { role: 'assistant', content: 'What date and time should I use?' },
+    ], 'Read my emails and send me the whole summary.'), null);
   });
 
   test('calendar read schemas tell the model their real bounds and search option', () => {
