@@ -244,7 +244,7 @@ reporting to whoever handles IT.`,
     key: 'schedule',
     name: 'Talking about the diary',
    tools: [
-     'calendar_list', 'calendar_find_slots', 'calendar_create', 'calendar_update', 'calendar_delete', 'calendar_respond',
+     'calendar_list', 'calendar_search', 'calendar_find_slots', 'calendar_create', 'calendar_update', 'calendar_delete', 'calendar_respond',
       'directory_search',
     ],
     whenToUse: 'The director asks about meetings, availability or her day.',
@@ -255,7 +255,9 @@ reporting to whoever handles IT.`,
       'invite', 'invitation',
     ],
     instructions: `Read the calendar before answering about availability or changing an
-existing event. Use the Director's timezone and explicit date boundaries. For a new meeting,
+existing event. Use calendar_list when the date is known. Use calendar_search when only the title
+is known or she asks to search her whole calendar; do not request an oversized calendar_list. Use
+the Director's timezone and explicit date boundaries. For a new meeting,
 show the complete subject, start, end, location, notes and attendees. Explain that invitations
 will be sent. When an attendee is named without an email address, use the organisation directory
 and only that directory. Use a unique organisation-domain match; if several people match, ask

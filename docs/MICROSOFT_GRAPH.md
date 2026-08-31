@@ -51,7 +51,9 @@ The assistant cannot substitute a prose confirmation for a real action card. If 
 
 ## Executive calendar reads
 
-`calendar_list` uses the v1.0 calendar view so recurring occurrences in the requested range are returned and deterministic overlap checks can be performed. Calendar create and time-change previews run that conflict check before an approval is created. A conflict is named in the preview; Hermes never silently changes the requested time.
+`calendar_list` uses the v1.0 calendar view so recurring occurrences in the requested range are returned and deterministic overlap checks can be performed. Its model-facing result limit is explicitly bounded from 1 to 100. `calendar_search` searches the default calendar by subject when the date is unknown, without exposing an arbitrary OData expression or dumping an entire calendar into the model. For a dated recurring occurrence, Hermes verifies the occurrence with `calendar_list` before proposing a change.
+
+Calendar create and time-change previews run the conflict check before an approval is created. A conflict is named in the preview; Hermes never silently changes the requested time. Delete previews re-read the exact opaque event reference. If the Director organised a meeting, Microsoft Outlook sends cancellation notices when the approved delete succeeds.
 
 `calendar_find_slots` uses the read-only `POST /me/calendar/getSchedule` operation with the Director and exact attendee addresses already resolved through the organisation directory. It intersects the returned availability views inside Outlook working hours. Missing availability is treated as busy. A returned slot is a recommendation only: it creates no event and sends no invitation. See Microsoft's [calendar view](https://learn.microsoft.com/en-us/graph/api/user-list-calendarview?view=graph-rest-1.0) and [getSchedule](https://learn.microsoft.com/en-us/graph/api/calendar-getschedule?view=graph-rest-1.0) documentation.
 

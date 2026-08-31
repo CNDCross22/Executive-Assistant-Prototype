@@ -19,6 +19,7 @@ import {
   isDurableMemoryStatement,
   looksLikeApprovalPrompt,
   looksLikeInternalProcess,
+  unresolvedActionGoal,
 } from '../agent/guards.js';
 import { assessSuspicion } from '../mail/suspicion.js';
 import { sanitiseReply } from '../agent/sanitise.js';
@@ -511,6 +512,7 @@ describe('action approval policy', () => {
       'Forward this message to Priya', 'Mark this email as read', 'Flag this message',
       'Archive this email', 'Delete that email', 'Turn on my out of office',
       'Create a calendar event', 'Update the Melbourne Opera calendar event',
+      'Please remove the Melbourne Opera from my calendar, cancel it.',
       'Add benedick@aretecare.com.au as an attendee to Melbourne Opera',
       'I want to add a note as well. Add be on time.',
       'Accept the meeting invitation', 'Decline the calendar meeting',
@@ -559,6 +561,53 @@ describe('action approval policy', () => {
     assert.equal(looksLikeApprovalPrompt('Would you like me to proceed?'), true);
     assert.equal(looksLikeApprovalPrompt('Do you want me to proceed to that step now so the system shows the confirmation card?'), true);
     assert.equal(looksLikeApprovalPrompt('The email asks you to review the figures.'), false);
+    assert.equal(looksLikeApprovalPrompt(
+      'I found it: Melbourne Opera, Saturday 29 August.\n\nCancel this event? Please reply Yes to proceed\nor No to cancel.',
+    ), true);
+  });
+
+  test('carries an unresolved cancellation through calendar-search and date clarifications', () => {
+    const original = 'Please remove the Melbourne Opera from my calendar, cancel it.';
+    const firstHistory = [
+      { role: 'user' as const, content: original },
+      { role: 'assistant' as const, content: 'I have not found or cancelled it. What date is it on?', steps: [{ tool: 'calendar_list', status: 'success' as const }] },
+    ];
+    assert.equal(unresolvedActionGoal(firstHistory, 'Check my whole calendar.'), original);
+    assert.equal(unresolvedActionGoal([
+      ...firstHistory,
+      { role: 'user' as const, content: 'Check my whole calendar.' },
+      { role: 'assistant' as const, content: 'I need a smaller date range.', steps: [{ tool: 'calendar_list', status: 'failed' as const }] },
+    ], "It's on 29 Aug."), original);
+    assert.equal(unresolvedActionGoal([
+      ...firstHistory,
+      { role: 'user' as const, content: "It's on 29 Aug." },
+      { role: 'assistant' as const, content: 'That earlier confirmation was not executable. Ask me to prepare the action again.' },
+    ], 'Please prepare the action again.'), original);
+  });
+
+  test('does not revive an old action after approval or from an acknowledgement', () => {
+    const original = 'Cancel the Melbourne Opera calendar event.';
+    assert.equal(unresolvedActionGoal([
+      { role: 'user', content: original },
+      { role: 'assistant', content: 'Which date?' },
+    ], 'Thanks.'), null);
+    assert.equal(unresolvedActionGoal([
+      { role: 'user', content: original },
+      { role: 'assistant', content: 'Delete this event?', steps: [{ tool: 'calendar_delete', status: 'approval_required' }] },
+    ], "It's on 29 Aug."), null);
+  });
+
+  test('calendar read schemas tell the model their real bounds and search option', () => {
+    const list = availableTools().find((tool) => tool.name === 'calendar_list');
+    const search = availableTools().find((tool) => tool.name === 'calendar_search');
+    assert.ok(list && search);
+    const listProperties = (list.parameters.properties as Record<string, Record<string, unknown>>);
+    assert.equal(listProperties.limit?.minimum, 1);
+    assert.equal(listProperties.limit?.maximum, 100);
+    assert.equal(list.schema.safeParse({ start: '2026-08-29T00:00:00', end: '2026-08-30T00:00:00', timezone: 'Asia/Taipei', limit: 101 }).success, false);
+    assert.match(list.description, /calendar_search/);
+    assert.equal(search.schema.safeParse({ query: 'Melbourne Opera', timezone: 'Asia/Taipei', limit: 10 }).success, true);
+    assert.ok(toolsForSkills(selectSkills('Search my whole calendar for Melbourne Opera')).includes('calendar_search'));
   });
 
   test('recognises natural amendments to a pending proposal', () => {

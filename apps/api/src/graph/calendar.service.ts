@@ -14,6 +14,8 @@ export interface CalendarEvent {
   isAllDay: boolean;
   isCancelled: boolean;
   webLink: string;
+  type?: 'singleInstance' | 'occurrence' | 'exception' | 'seriesMaster';
+  seriesMasterId?: string;
 }
 
 interface GraphEvent {
@@ -21,6 +23,7 @@ interface GraphEvent {
   location?: { displayName?: string }; organizer?: { emailAddress?: { address?: string } };
   attendees?: Array<{ emailAddress?: { name?: string; address?: string }; status?: { response?: string } }>;
   isAllDay?: boolean; isCancelled?: boolean; webLink?: string;
+  type?: CalendarEvent['type']; seriesMasterId?: string;
 }
 
 interface GraphScheduleInformation {
@@ -28,7 +31,7 @@ interface GraphScheduleInformation {
   availabilityView?: string;
 }
 
-const SELECT = 'id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,webLink';
+const SELECT = 'id,subject,start,end,location,organizer,attendees,isAllDay,isCancelled,webLink,type,seriesMasterId';
 
 export class CalendarService {
   constructor(private readonly graph: GraphClient) {}
@@ -40,16 +43,37 @@ export class CalendarService {
       organiser: e.organizer?.emailAddress?.address ?? '',
       attendees: (e.attendees ?? []).map((a) => ({ name: a.emailAddress?.name ?? a.emailAddress?.address ?? '', address: a.emailAddress?.address ?? '', response: a.status?.response ?? 'none' })),
       isAllDay: e.isAllDay ?? false, isCancelled: e.isCancelled ?? false, webLink: e.webLink ?? '',
+      type: e.type, seriesMasterId: e.seriesMasterId,
     };
   }
 
   async list(start: string, end: string, timezone: string, limit = 50): Promise<CalendarEvent[]> {
     const graphTimezone = toWindows(timezone);
     const events = await this.graph.collect<GraphEvent>('/me/calendarView', {
-      query: { startDateTime: start, endDateTime: end, $select: SELECT, $orderby: 'start/dateTime', $top: Math.min(limit, 100) },
+      query: { startDateTime: start, endDateTime: end, $select: SELECT, $orderby: 'start/dateTime', $top: Math.min(limit, 1000) },
       headers: { Prefer: `outlook.timezone="${graphTimezone.replace(/"/g, '')}"` }, label: 'calendar.list',
-    }, Math.ceil(limit / 100));
+    }, Math.ceil(limit / 1000));
     return events.slice(0, limit).map((e) => this.shape(e));
+  }
+
+  /**
+   * Search event subjects without dumping the whole calendar into the model.
+   * Graph builds the OData request here; the model never supplies a filter.
+   */
+  async search(query: string, timezone: string, limit = 25): Promise<CalendarEvent[]> {
+    const graphTimezone = toWindows(timezone);
+    const escaped = query.trim().replace(/[\u0000-\u001f\u007f]/g, ' ').replace(/'/g, "''");
+    if (!escaped) return [];
+    const events = await this.graph.collect<GraphEvent>('/me/calendar/events', {
+      query: {
+        $select: SELECT,
+        $filter: `contains(subject,'${escaped}')`,
+        $top: Math.min(limit, 100),
+      },
+      headers: { Prefer: `outlook.timezone="${graphTimezone.replace(/"/g, '')}"` },
+      label: 'calendar.search',
+    }, Math.ceil(limit / 100));
+    return events.slice(0, limit).map((event) => this.shape(event));
   }
 
   /** Read-only free/busy data for the Director and explicitly resolved attendees. */

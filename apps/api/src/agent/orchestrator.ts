@@ -15,6 +15,7 @@ import {
   isDurableMemoryStatement,
   looksLikeApprovalPrompt,
   looksLikeInternalProcess,
+  unresolvedActionGoal,
 } from './guards.js';
 import { recall, markUsed } from '../memory/store.js';
 import { observeFromMessage } from '../memory/learning.js';
@@ -206,7 +207,10 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   });
   const mode = classifyResponseMode(message);
   const presentation = responsePolicy(mode);
-  const modelPolicy = resolveModelPolicy(mode);
+  const actionGoal = unresolvedActionGoal(history, message);
+  // Consequential changes get the strongest configured reasoning policy even
+  // when the latest clarification is only a few words long.
+  const modelPolicy = resolveModelPolicy(actionGoal || revision ? 'executive' : mode);
 
   const messages: ChatMessage[] = [
     {
@@ -222,6 +226,13 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
       }),
     },
     ...assembled.messages,
+    ...(actionGoal && actionGoal !== message ? [{
+      role: 'system' as const,
+      content:
+        `The current message clarifies this still-unresolved request from the Director: ${JSON.stringify(actionGoal.slice(0, 500))}. ` +
+        'This carries the requested goal, not approval. Continue that goal now. If you verify the exact target, call the registered write tool so code can create the real approval. ' +
+        'Do not ask for Yes or confirmation yourself.',
+    }] : []),
     ...(revision ? [{
       role: 'system' as const,
       content:
@@ -234,6 +245,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   ];
 
   const steps: AgentStep[] = [];
+  let actionReadState: 'unknown' | 'empty' | 'found' = 'unknown';
   const tools = toolDefinitions(toolsForSkills(selectedSkills));
   const provider = aiProvider(modelPolicy.role);
 
@@ -318,12 +330,13 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
         // A model-written preview has no executable approval behind it. Give
         // the model one correction attempt per iteration; never show the fake
         // preview or invite the Director to confirm something that cannot run.
+        const safeVerifiedNoMatch =
+          actionReadState === 'empty' &&
+          /\b(?:could not|couldn't|did not|didn't|haven't|have not|no)\b.{0,100}\b(?:find|found|match|result|event|message|email|task|contact)\b|\bnothing (?:was|has been) changed\b/is.test(raw);
         const invalidActionReply =
-          isActionRequest(message) ||
-          isApprovalRevisionRequest(message) ||
-          revision !== null ||
           looksLikeApprovalPrompt(raw) ||
-          looksLikeInternalProcess(raw);
+          looksLikeInternalProcess(raw) ||
+          ((Boolean(actionGoal) || isApprovalRevisionRequest(message) || revision !== null) && !safeVerifiedNoMatch);
         if (invalidActionReply && !steps.some((step) => step.status === 'approval_required')) {
           if (iteration < MAX_ITERATIONS) {
             messages.push({ role: 'assistant', content: raw });
@@ -408,6 +421,12 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
         };
       }
 
+      for (const outcome of outcomes) {
+        const evidence = readResultEvidence(outcome);
+        if (evidence === 'found') actionReadState = 'found';
+        else if (evidence === 'empty' && actionReadState === 'unknown') actionReadState = 'empty';
+      }
+
       logger.debug({ iteration, tools: outcomes.map((o) => o.name) }, 'Agent iteration');
     }
 
@@ -424,6 +443,19 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+function readResultEvidence(outcome: ToolOutcome): 'unknown' | 'empty' | 'found' {
+  if (outcome.riskLevel !== 0 || outcome.status !== 'success' || !outcome.result || typeof outcome.result !== 'object') {
+    return 'unknown';
+  }
+  const result = outcome.result as Record<string, unknown>;
+  if (typeof result.count === 'number') return result.count > 0 ? 'found' : 'empty';
+  for (const key of ['events', 'messages', 'contacts', 'people', 'tasks', 'items', 'files']) {
+    const value = result[key];
+    if (Array.isArray(value)) return value.length > 0 ? 'found' : 'empty';
+  }
+  return 'unknown';
 }
 
 function formatApprovalPreview(preview: ActionPreview): string {

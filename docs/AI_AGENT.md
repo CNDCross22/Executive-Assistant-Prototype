@@ -48,7 +48,7 @@ Current roles are `fast`, `executive`, `briefing` and reserved `background`. Cur
 
 1. `tryFastPath()` answers deterministic questions without spending API credits.
 2. Relevant approved memories and Microsoft 365 tool definitions are added to the prompt.
-3. A deterministic response policy and purpose-based model policy are selected.
+3. A deterministic response policy and purpose-based model policy are selected. Any unresolved consequential action is prepared with the executive model, even when the latest clarification is short.
 4. The bounded orchestrator calls OpenAI and validates every requested tool.
 5. Read operations execute immediately. Changes resolve their exact target and create a complete, expiring preview.
 6. The preview is persisted with the chat and remains an interactive card after a page refresh.
@@ -57,7 +57,7 @@ Current roles are `fast`, `executive`, `briefing` and reserved `background`. Cur
 9. `checkClaims()` blocks claims of actions that were not actually performed.
 10. The sanitized answer, usage attribution and privacy-safe telemetry are persisted.
 
-The model never constructs Microsoft Graph requests. It can only select registered tools whose arguments are validated before execution. Model-written confirmation language is rejected unless a real executable approval exists. External email content is treated as untrusted data, never as instruction.
+The model never constructs Microsoft Graph requests. It can only select registered tools whose arguments are validated before execution. Model-written confirmation language, including multiline Yes/No prompts, is rejected unless a real executable approval exists. A short clarification such as a date may retain an unresolved action goal, but it never carries approval: the exact write tool must still create a new approval record. External email content is treated as untrusted data, never as instruction.
 
 After approval, a confirmed Microsoft 365 result is reported independently of approval-audit persistence. If Microsoft Graph returns an ambiguous transport failure, the assistant reports that the outcome is unconfirmed and asks the Director to check Outlook before retrying, preventing accidental duplicates.
 
@@ -104,6 +104,7 @@ npm run test
 npm run eval:behaviour
 npm run typecheck
 npm run test:agent
+npm run verify:calendar-model
 npm run test:graph
 LOG_LEVEL=debug npm run dev:api
 ```

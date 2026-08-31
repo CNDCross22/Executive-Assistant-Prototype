@@ -25,7 +25,7 @@ export function isActionRequest(message: string): boolean {
     /\b(add|remove|invite)\b.{0,60}\b(attendee|guest|participant)s?\b/,
     /\b(add|append|update|change|edit|set|replace)\b.{0,60}\b(note|notes|description|details|body)\b/,
     /\b(send|reply|respond|forward|draft|compose)\b.{0,60}\b(email|mail|message|reply)?\b/,
-    /\b(create|add|book|schedule|reschedule|update|edit|change|move|delete|cancel|accept|decline|tentatively accept)\b.{0,60}\b(calendar|event|meeting|appointment|invitation)s?\b/,
+    /\b(create|add|book|schedule|reschedule|update|edit|change|move|remove|delete|cancel|accept|decline|tentatively accept)\b.{0,60}\b(calendar|event|meeting|appointment|invitation)s?\b/,
     /\b(create|add|update|edit|change|complete|delete|remove)\b.{0,60}\b(task|reminder|to-do|todo)s?\b/,
     /\b(create|add|update|edit|change|delete|remove)\b.{0,60}\b(contact)s?\b/,
     /\b(mark|flag|unflag|archive|move|delete)\b.{0,60}\b(email|mail|message|it|this|that)\b/,
@@ -61,7 +61,7 @@ export function isApprovalRevisionRequest(message: string): boolean {
 /** Confirmation language is reserved for real approval cards created by code. */
 export function looksLikeApprovalPrompt(reply: string): boolean {
   const patterns = [
-    /please\s+(reply|say|choose|select)\s+yes.{0,40}\b(no|cancel)\b/i,
+    /please\s+(reply|say|choose|select)\s+yes.{0,80}\b(no|cancel)\b/is,
     /would you like me to proceed/i,
     /\bdo you want me to proceed\b/i,
     /\b(?:should|shall) i proceed\b/i,
@@ -71,6 +71,55 @@ export function looksLikeApprovalPrompt(reply: string): boolean {
     /\bconfirm (this|the) (change|action|update|send|meeting|event|email|task)/i,
   ];
   return patterns.some((pattern) => pattern.test(reply));
+}
+
+interface ActionHistoryTurn {
+  role: 'user' | 'assistant';
+  content: string;
+  steps?: Array<{ tool: string; status: 'success' | 'failed' | 'approval_required' }>;
+}
+
+const ACTION_WRITE_TOOLS = new Set([
+  'mail_create_draft', 'mail_create_reply_draft', 'mail_send', 'mail_reply', 'mail_forward', 'mail_send_draft',
+  'mail_change_state', 'mail_move', 'mail_delete', 'mailbox_settings_update',
+  'calendar_create', 'calendar_update', 'calendar_delete', 'calendar_respond',
+  'contact_create', 'contact_update', 'contact_delete',
+  'task_create', 'task_update', 'task_delete', 'memory_remember', 'memory_forget',
+]);
+
+/**
+ * Recover the still-unresolved action behind a short clarification.
+ *
+ * This carries intent, never authority: the returned goal must still reach a
+ * registered write tool and create a real approval. It deliberately ignores
+ * greetings and acknowledgements so an old request cannot spring back to life.
+ */
+export function unresolvedActionGoal(history: ActionHistoryTurn[], message: string): string | null {
+  if (isActionRequest(message)) return message;
+
+  const text = message.trim();
+  if (!text || text.length > 240) return null;
+  const clarification =
+    /\b(it|that|those|them|same|actually|instead)\b/i.test(text) ||
+    /\b(?:on|in|at|for)\s+(?:the\s+)?(?:\d{1,2}(?::\d{2})?|today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)/i.test(text) ||
+    /\b(?:try|prepare|do)\b.{0,30}\bagain\b/i.test(text) ||
+    /\b(check|search|look|find)\b.{0,50}\b(calendar|diary|email|mail|message|meeting|event|task|reminder|contact)\b/i.test(text) ||
+    /\b(calendar|diary|email|mail|message|meeting|event|task|reminder|contact)\b.{0,50}\b(check|search|look|find)\b/i.test(text);
+  if (!clarification) return null;
+
+  const recent = history.slice(-12);
+  for (let index = recent.length - 1; index >= 0; index--) {
+    const turn = recent[index]!;
+    if (turn.role !== 'user' || !isActionRequest(turn.content)) continue;
+
+    const later = recent.slice(index + 1);
+    const alreadyPreparedOrRun = later.some((candidate) => candidate.steps?.some(
+      (step) => ACTION_WRITE_TOOLS.has(step.tool) && (step.status === 'approval_required' || step.status === 'success'),
+    ));
+    if (!alreadyPreparedOrRun) return turn.content;
+    return null;
+  }
+  return null;
 }
 
 /** Internal workflow belongs in code and logs, never in a Director-facing reply. */

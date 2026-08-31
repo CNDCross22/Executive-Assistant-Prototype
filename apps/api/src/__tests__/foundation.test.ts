@@ -91,9 +91,9 @@ describe('Phase 1 response policy', () => {
 });
 
 describe('Phase 1 tool metadata', () => {
-  test('all 50 registered tools have coherent operational metadata', () => {
+  test('all 51 registered tools have coherent operational metadata', () => {
     const tools = availableTools();
-    assert.equal(tools.length, 50);
+    assert.equal(tools.length, 51);
     for (const tool of tools) {
       assert.ok(tool.metadata.category, `${tool.name} category`);
       assert.ok(tool.metadata.effect, `${tool.name} effect`);

@@ -160,9 +160,9 @@ const mailboxUpdate = defineTool({
 });
 
 const calendarList = defineTool({
-  name: 'calendar_list', description: 'List calendar events in an explicit date range and report verified overlaps. Use the Director timezone. This reads data and never changes the calendar.', riskLevel: 0, capability: 'calendar_read',
+  name: 'calendar_list', description: 'List calendar events in an explicit date range and report verified overlaps. Use this when the date is known. Use calendar_search when only the event title is known or the Director asks to search the whole calendar. Use the Director timezone. This reads data and never changes the calendar.', riskLevel: 0, capability: 'calendar_read',
   schema: z.object({ start: iso, end: iso, timezone: z.string().min(1).max(100), limit: z.number().int().min(1).max(100).default(50) }),
-  parameters: objectSchema({ start: { type: 'string', description: 'ISO date-time.' }, end: { type: 'string', description: 'ISO date-time.' }, timezone: { type: 'string' }, limit: { type: 'integer', default: 50 } }, ['start', 'end', 'timezone']),
+  parameters: objectSchema({ start: { type: 'string', description: 'Inclusive range start as an ISO date-time.' }, end: { type: 'string', description: 'Exclusive range end as an ISO date-time.' }, timezone: { type: 'string', description: 'Director timezone.' }, limit: { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum events to return. Never exceed 100.' } }, ['start', 'end', 'timezone']),
   summarise: () => 'Checked the calendar', async execute(a, ctx) {
     const events = await ctx.calendar.list(a.start, a.end, a.timezone, a.limit);
     const seen = new Set<string>();
@@ -178,6 +178,35 @@ const calendarList = defineTool({
       conflictStatus: overlaps.length ? 'conflicts_found' : 'no_conflicts_found',
       overlaps,
       events: events.map((e) => ({ ...e, ref: ctx.refs.ref(e.id), id: undefined })),
+    };
+  },
+});
+
+const calendarSearch = defineTool({
+  name: 'calendar_search',
+  description: 'Search the Director\'s default calendar by event subject when the date is unknown or the Director asks to search the whole calendar. This is read-only. It returns single events and recurring-series masters; when a particular recurring occurrence or date is meant, verify it with calendar_list before changing it.',
+  riskLevel: 0,
+  capability: 'calendar_read',
+  schema: z.object({
+    query: z.string().trim().min(1).max(200),
+    timezone: z.string().min(1).max(100),
+    limit: z.number().int().min(1).max(25).default(10),
+  }),
+  parameters: objectSchema({
+    query: { type: 'string', minLength: 1, maxLength: 200, description: 'Distinctive words from the event subject, not an OData expression.' },
+    timezone: { type: 'string', description: 'Director timezone.' },
+    limit: { type: 'integer', minimum: 1, maximum: 25, default: 10 },
+  }, ['query', 'timezone']),
+  summarise: () => 'Searched the calendar by title',
+  async execute(a, ctx) {
+    const events = await ctx.calendar.search(a.query, a.timezone, a.limit);
+    return {
+      count: events.length,
+      query: a.query,
+      events: events.map((event) => ({ ...event, ref: ctx.refs.ref(event.id), id: undefined })),
+      note: events.length
+        ? 'These are verified Microsoft 365 calendar matches. No event has been changed.'
+        : 'No matching event subject was found. No event has been changed.',
     };
   },
 });
@@ -342,9 +371,9 @@ const calendarUpdate = defineTool({
 });
 
 const calendarDelete = defineTool({
-  name: 'calendar_delete', description: 'Delete or cancel a referenced calendar event. List calendar first.', riskLevel: 3, capability: 'calendar_write',
+  name: 'calendar_delete', description: 'Delete or cancel one exact referenced calendar event. Find it with calendar_list or calendar_search first. This always creates a destructive-action approval and never executes immediately.', riskLevel: 3, capability: 'calendar_write',
   schema: z.object({ eventRef: ref, title: z.string().max(300).default('Selected event') }), parameters: objectSchema({ eventRef: { type: 'string' }, title: { type: 'string' } }, ['eventRef']), summarise: () => 'Deleted the selected calendar event',
-  preview: async (a, ctx) => { const event = await ctx.calendar.get(resolve(a.eventRef, ctx)); return { title: 'Delete this calendar event?', summary: event.subject, details: [{ label: 'When', value: formatCalendarRange(event.start, event.end, event.timezone) }, ...(event.location ? [{ label: 'Where', value: event.location }] : [])], warning: 'This removes the event and may send a cancellation to attendees.' }; },
+  preview: async (a, ctx) => { const event = await ctx.calendar.get(resolve(a.eventRef, ctx)); return { title: event.type === 'seriesMaster' ? 'Delete this recurring series?' : 'Delete this calendar event?', summary: event.subject, details: [{ label: 'When', value: formatCalendarRange(event.start, event.end, event.timezone) }, ...(event.type === 'seriesMaster' ? [{ label: 'Scope', value: 'Entire recurring series' }] : []), ...(event.location ? [{ label: 'Where', value: event.location }] : []), ...(event.attendees.length ? [{ label: 'Attendees', value: event.attendees.map((attendee) => attendee.name || attendee.address).join(', ') }] : [])], warning: `${event.type === 'seriesMaster' ? 'This removes every occurrence in the recurring series. ' : 'This removes the event. '}${event.attendees.length ? 'If you organised the meeting, Outlook sends cancellation notices to attendees.' : 'This cannot be undone in Hermes.'}` }; },
   async execute(a, ctx) { await ctx.calendar.delete(resolve(a.eventRef, ctx)); return { deleted: true }; },
 });
 
@@ -425,7 +454,7 @@ const taskDelete = defineTool({
 
 export const officeTools: Tool<never>[] = [
   profileRead, mailFolders, mailDraft, mailReplyDraft, mailSend, mailReply, mailForward, mailSendDraft, mailState, mailMove, mailDelete,
-  mailboxGet, mailboxUpdate, calendarList, calendarFindSlots, calendarCreate, calendarUpdate, calendarDelete, calendarRespond,
+  mailboxGet, mailboxUpdate, calendarList, calendarSearch, calendarFindSlots, calendarCreate, calendarUpdate, calendarDelete, calendarRespond,
   contactsSearch, peopleSearch, directorySearch, contactCreate, contactUpdate, contactDelete,
   taskLists, taskList, taskCreate, taskUpdate, taskDelete,
 ] as unknown as Tool<never>[];

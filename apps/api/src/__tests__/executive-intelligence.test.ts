@@ -95,6 +95,65 @@ describe('Phase 4 evidence-backed email intelligence', () => {
 });
 
 describe('Phase 4 calendar conflict and availability intelligence', () => {
+  test('searches event subjects without exposing an arbitrary Graph filter', async () => {
+    let captured: { path?: string; query?: Record<string, unknown>; pages?: number } = {};
+    const graph = {
+      collect: async (path: string, options: { query?: Record<string, unknown> }, pages: number) => {
+        captured = { path, query: options.query, pages };
+        return [{
+          id: 'opera', subject: 'Melbourne Opera',
+          start: { dateTime: '2026-08-29T09:00:00', timeZone: 'AUS Eastern Standard Time' },
+          end: { dateTime: '2026-08-29T11:00:00', timeZone: 'AUS Eastern Standard Time' },
+        }];
+      },
+    } as unknown as GraphClient;
+    const events = await new CalendarService(graph).search("Director's Opera", 'Australia/Sydney', 10);
+    assert.equal(captured.path, '/me/calendar/events');
+    assert.equal(captured.query?.$filter, "contains(subject,'Director''s Opera')");
+    assert.equal(captured.query?.$top, 10);
+    assert.equal(captured.pages, 1);
+    assert.equal(events[0]?.id, 'opera');
+  });
+
+  test('calendar search returns opaque references and delete preview re-verifies the exact event', async () => {
+    const search = availableTools().find((candidate) => candidate.name === 'calendar_search');
+    const remove = availableTools().find((candidate) => candidate.name === 'calendar_delete');
+    assert.ok(search && remove?.preview);
+    const refs = new RefTable();
+    const matching = event({ id: 'opera', subject: 'Melbourne Opera', start: '2026-08-29T09:00:00', end: '2026-08-29T11:00:00', attendees: [{ name: 'Benedick Gabis', address: 'benedick@company.com', response: 'accepted' }] });
+    const ctx = {
+      user: { id: 'user', msUserId: 'ms', email: ME, displayName: 'Director', jobTitle: null, timezone: 'Australia/Sydney' },
+      calendar: { search: async () => [matching], get: async () => matching }, refs, me: ME,
+    } as unknown as ToolContext;
+    const result = await (search.execute as (value: { query: string; timezone: string; limit: number }, context: ToolContext) => Promise<{ count: number; events: Array<{ ref: string; id?: string }> }>)({ query: 'Melbourne Opera', timezone: 'Australia/Sydney', limit: 10 }, ctx);
+    assert.equal(result.count, 1);
+    assert.equal(result.events[0]?.id, undefined);
+    const eventRef = result.events[0]?.ref;
+    assert.ok(eventRef && eventRef !== matching.id);
+    const args = remove.schema.parse({ eventRef, title: matching.subject });
+    const preview = await (remove.preview as (value: typeof args, context: ToolContext) => Promise<ActionPreview>)(args, ctx);
+    assert.equal(preview.summary, 'Melbourne Opera');
+    assert.ok(preview.details.some((detail) => detail.label === 'Attendees' && /Benedick/.test(detail.value)));
+    assert.match(preview.warning ?? '', /Outlook sends cancellation notices/i);
+  });
+
+  test('a recurring-series deletion is explicit about its full scope', async () => {
+    const remove = availableTools().find((candidate) => candidate.name === 'calendar_delete');
+    assert.ok(remove?.preview);
+    const refs = new RefTable();
+    const recurring = event({ id: 'series', subject: 'Leadership meeting', type: 'seriesMaster' });
+    const eventRef = refs.ref(recurring.id);
+    const ctx = {
+      user: { id: 'user', msUserId: 'ms', email: ME, displayName: 'Director', jobTitle: null, timezone: 'Asia/Taipei' },
+      calendar: { get: async () => recurring }, refs, me: ME,
+    } as unknown as ToolContext;
+    const args = remove.schema.parse({ eventRef });
+    const preview = await (remove.preview as (value: typeof args, context: ToolContext) => Promise<ActionPreview>)(args, ctx);
+    assert.match(preview.title, /recurring series/i);
+    assert.ok(preview.details.some((detail) => detail.label === 'Scope' && /Entire recurring series/.test(detail.value)));
+    assert.match(preview.warning ?? '', /every occurrence/i);
+  });
+
   test('unwraps the Microsoft Graph getSchedule collection response', async () => {
     let request: { path?: string; method?: string } = {};
     const graph = {

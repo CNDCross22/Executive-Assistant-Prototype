@@ -73,6 +73,7 @@ async function main(): Promise<void> {
     }),
     check('Mail folders', async () => `${(await mail.listFolders()).length} folder(s)`),
     check('Calendars.Read', async () => `${(await calendar.list(start.toISOString(), end.toISOString(), user.timezone, 10)).length} event(s) in next 7 days`),
+    check('Calendar subject search', async () => `${(await calendar.search('__HermesCalendarSearchProbe__', user.timezone, 1)).length} probe match(es)`),
     check('Calendar free/busy', async () => {
       const schedules = await calendar.getSchedule(
         [user.email],
