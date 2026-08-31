@@ -285,6 +285,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
           conversationId: ctx.conversationId,
           workflowId: ctx.workflowId,
           modelRole: modelPolicy.role,
+          serviceTier: result.serviceTier,
           responseMode: mode,
           iteration,
           usage: result.usage,
@@ -294,6 +295,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
           category: 'model', action: 'call', status: 'success', userId: ctx.user.id,
           requestId: ctx.requestId, conversationId: ctx.conversationId, workflowId: ctx.workflowId,
           model: result.model, modelRole: modelPolicy.role, responseMode: mode,
+          serviceTier: result.serviceTier,
           budgetCategory: modelPolicy.budgetCategory, purpose: 'chat', iteration,
           durationMs: Date.now() - callStarted, promptTokens: result.usage.promptTokens,
           cachedTokens: result.usage.cachedTokens ?? 0, completionTokens: result.usage.completionTokens,
@@ -366,7 +368,12 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
         };
       }
 
-      messages.push({ role: 'assistant', content: result.content, toolCalls: result.toolCalls });
+      messages.push({
+        role: 'assistant',
+        content: result.content,
+        toolCalls: result.toolCalls,
+        providerState: result.providerState,
+      });
 
       // Process in order. As soon as a write needs approval, stop: only one
       // concrete proposal may be pending in a conversation at a time.

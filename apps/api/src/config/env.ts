@@ -22,6 +22,7 @@ const optionalBudget = () => blankToUndefined(z.coerce.number().min(0).optional(
 const optionalReasoningEffort = () => blankToUndefined(
   z.enum(['none', 'minimal', 'low', 'medium', 'high', 'xhigh', 'max']).optional(),
 );
+const optionalServiceTier = () => blankToUndefined(z.enum(['default', 'fast']).optional());
 
 /**
  * Environment is parsed leniently on purpose.
@@ -52,16 +53,21 @@ const schema = z.object({
 
   // OpenAI
   OPENAI_API_KEY: optionalText(),
-  OPENAI_MODEL: z.string().default('gpt-5-mini'),
-  OPENAI_FAST_MODEL: optionalText(),
-  OPENAI_EXECUTIVE_MODEL: optionalText(),
-  OPENAI_BRIEFING_MODEL: optionalText(),
-  OPENAI_BACKGROUND_MODEL: optionalText(),
-  OPENAI_REASONING_EFFORT: optionalReasoningEffort().default('minimal'),
-  OPENAI_FAST_REASONING_EFFORT: optionalReasoningEffort(),
-  OPENAI_EXECUTIVE_REASONING_EFFORT: optionalReasoningEffort(),
-  OPENAI_BRIEFING_REASONING_EFFORT: optionalReasoningEffort(),
-  OPENAI_BACKGROUND_REASONING_EFFORT: optionalReasoningEffort(),
+  OPENAI_MODEL: z.string().default('gpt-5.6-luna'),
+  OPENAI_FAST_MODEL: optionalText().default('gpt-5.6-luna'),
+  OPENAI_EXECUTIVE_MODEL: optionalText().default('gpt-5.6-sol'),
+  OPENAI_BRIEFING_MODEL: optionalText().default('gpt-5.6-luna'),
+  OPENAI_BACKGROUND_MODEL: optionalText().default('gpt-5.6-luna'),
+  OPENAI_REASONING_EFFORT: optionalReasoningEffort().default('none'),
+  OPENAI_FAST_REASONING_EFFORT: optionalReasoningEffort().default('none'),
+  OPENAI_EXECUTIVE_REASONING_EFFORT: optionalReasoningEffort().default('low'),
+  OPENAI_BRIEFING_REASONING_EFFORT: optionalReasoningEffort().default('low'),
+  OPENAI_BACKGROUND_REASONING_EFFORT: optionalReasoningEffort().default('none'),
+  OPENAI_SERVICE_TIER: optionalServiceTier().default('default'),
+  OPENAI_FAST_SERVICE_TIER: optionalServiceTier().default('default'),
+  OPENAI_EXECUTIVE_SERVICE_TIER: optionalServiceTier().default('fast'),
+  OPENAI_BRIEFING_SERVICE_TIER: optionalServiceTier().default('default'),
+  OPENAI_BACKGROUND_SERVICE_TIER: optionalServiceTier().default('default'),
   /** Hard monthly cap in USD. 0 disables the cap. */
   OPENAI_MONTHLY_BUDGET_USD: z.coerce.number().min(0).default(5),
   OPENAI_INTERACTIVE_BUDGET_USD: optionalBudget(),
@@ -70,7 +76,7 @@ const schema = z.object({
   OPENAI_BACKGROUND_BUDGET_USD: z.coerce.number().min(0).default(0),
 
   // Phase 1 policy layer. Off preserves the existing 800/500-token ceilings.
-  HERMES_RESPONSE_MODES: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
+  HERMES_RESPONSE_MODES: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(true),
 
   // Phase 5. In-app delivery is safe by default; unattended mailbox polling is
   // separately opt-in because it changes when Graph is accessed.

@@ -9,11 +9,12 @@ import {
   modelPolicySummary,
   modelRoleForResponse,
   reasoningEffortForRole,
+  serviceTierForRole,
   resolveModelPolicy,
   type ModelRole,
 } from '../ai/policy.js';
 import { budgetUsdForCategory, costMicros } from '../ai/cost.js';
-import { tokenLimitOptions } from '../ai/openai.js';
+import { responseGenerationOptions } from '../ai/openai.js';
 import { availableTools } from '../agent/registry.js';
 import { createOperationContext } from '../observability/context.js';
 import { safeTelemetryPayload } from '../observability/telemetry.js';
@@ -31,6 +32,7 @@ describe('Phase 1 model policy compatibility', () => {
       assert.ok(reasoningEffortForRole(role));
     }
     assert.equal(modelPolicySummary().executive.model, modelForRole('executive'));
+    assert.equal(modelPolicySummary().executive.serviceTier, serviceTierForRole('executive'));
   });
 
   test('response modes map to purpose roles and budget categories deterministically', () => {
@@ -45,9 +47,9 @@ describe('Phase 1 model policy compatibility', () => {
   });
 
   test('role-specific reasoning is passed to GPT-5 requests', () => {
-    assert.deepEqual(tokenLimitOptions('gpt-5.6-terra', 900, 0.3, 'medium'), {
-      max_completion_tokens: 900,
-      reasoning_effort: 'medium',
+    assert.deepEqual(responseGenerationOptions('gpt-5.6-terra', 900, 0.3, 'medium'), {
+      max_output_tokens: 900,
+      reasoning: { effort: 'medium' },
     });
   });
 
@@ -55,6 +57,10 @@ describe('Phase 1 model policy compatibility', () => {
     assert.equal(costMicros('gpt-5.6-luna', { promptTokens: 1_000_000, completionTokens: 1_000_000 }), 1_400_000);
     assert.equal(costMicros('gpt-5.6-terra', { promptTokens: 1_000_000, completionTokens: 1_000_000 }), 14_000_000);
     assert.equal(costMicros('gpt-5.6-sol', { promptTokens: 1_000_000, completionTokens: 1_000_000 }), 24_000_000);
+    assert.equal(
+      costMicros('gpt-5.6-sol', { promptTokens: 1_000_000, completionTokens: 1_000_000 }, 'priority'),
+      48_000_000,
+    );
   });
 
   test('background model spending is disabled by default', () => {

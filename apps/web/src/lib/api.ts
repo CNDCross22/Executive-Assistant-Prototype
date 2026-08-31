@@ -89,7 +89,7 @@ export interface SetupResponse {
   ai?: {
     provider: 'openai';
     model: string;
-    roles?: Record<string, { model: string; reasoningEffort: string }>;
+    roles?: Record<string, { model: string; reasoningEffort: string; serviceTier: string }>;
     adaptiveResponseLimits?: boolean;
   };
   soul?: { source: string; words: number; approxTokens: number };

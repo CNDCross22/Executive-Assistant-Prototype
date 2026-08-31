@@ -1,210 +1,133 @@
 # Hermes Model Strategy
 
-Version: 2.0 planning specification
+Version: 2.1 implementation specification
 Prepared: 31 August 2026
 
 ## Status legend
 
-**CONFIRMED** is source- or documentation-backed. **INFERRED** is not live-tested. **PROPOSED** is the target policy. **REQUIRES VERIFICATION** must be checked against the production account and current pricing before release.
+**CONFIRMED** is verified in code, tests, or current official documentation. **INFERRED** is a reasoned conclusion that has not been production-measured. **PROPOSED** is future work. **REQUIRES VERIFICATION** must be checked against live account behaviour.
 
 ## 1. Current behaviour
 
 **CONFIRMED**:
 
-- Hermes uses the official OpenAI Node SDK version 7.5.0.
-- The implementation calls Chat Completions through one `OpenAIProvider` instance.
-- The SDK exposes both `chat.completions.create()` and `responses.create()`.
-- `OPENAI_MODEL` is currently `gpt-5-mini` and is used for ordinary chat and briefing.
-- GPT-5-family requests receive `reasoning_effort: "minimal"`, `max_completion_tokens`, and no temperature override.
-- Ordinary chat has an 800-token completion ceiling; briefing has 500.
-- Usage is recorded per model and purpose with prompt, cached, completion tokens, duration, and cost.
-- A USD 5 monthly hard cap prevents further model calls; deterministic features continue.
+- Hermes uses the official OpenAI Node SDK and the Responses API.
+- Routine direct and action-status work uses `gpt-5.6-luna` with reasoning `none` on the standard tier.
+- Executive analysis, drafts, and sensitive work use `gpt-5.6-sol` with reasoning `low` and Fast processing.
+- Briefings use `gpt-5.6-luna` with reasoning `low` on the standard tier.
+- The reserved background role uses Luna with reasoning `none`, but its category budget is zero and background model work is disabled.
+- Response modes apply adaptive output ceilings without requiring long answers.
+- The global model budget is USD 5 per month. The recommended category split is USD 4.50 interactive and USD 0.50 briefing.
+- Every model iteration is independently budget-checked and attributed by request, conversation, workflow, role, mode, model, actual service tier, token usage, duration, and cost.
+- Microsoft 365 tools, opaque references, approval previews, strict approval matching, action-claim checks, and output sanitisation are unchanged.
 
-**INFERRED**: The current account can probably access the configured model because it is the current local setting, but this was not live-verified.
+## 2. Official model and API findings
 
-## 2. Current official model/API findings
+**CONFIRMED as of 31 August 2026**:
 
-**CONFIRMED as of 31 August 2026** from official OpenAI documentation:
+- OpenAI recommends its current GPT-5.6 family and recommends Responses for reasoning, function tools, and multi-turn model workflows.
+- GPT-5.6 Sol is the flagship reasoning model. Its published standard rates are USD 4 per million input tokens, USD 0.40 cached input, and USD 20 output.
+- GPT-5.6 Luna is the high-throughput, cost-sensitive model. Its published rates are USD 0.20 per million input tokens, USD 0.02 cached input, and USD 1.20 output.
+- Fast processing for Sol is requested with `service_tier=fast`; OpenAI reports the effective tier in the response and currently bills Fast at twice standard token rates.
+- Sol tool workflows with reasoning require the Responses API compatibility path used here. A Chat Completions model-name-only switch would not provide the intended configuration safely.
 
-- OpenAI recommends the GPT-5.6 family for current general workloads and recommends the Responses API for reasoning, tool calling, and multi-turn agentic work: [Latest model guide](https://developers.openai.com/api/docs/guides/latest-model).
-- The current catalog positions GPT-5.6 Sol as flagship, Terra as balanced, and Luna as lower-cost/high-throughput: [Model catalog](https://developers.openai.com/api/docs/models).
-- GPT-5.6 Sol supports both Chat Completions and Responses, function calling, and structured outputs. Hosted tools are Responses-only: [GPT-5.6 Sol](https://developers.openai.com/api/docs/models/gpt-5.6-sol).
-- The official catalog currently shows per-million-token prices of Sol USD 4 input, USD 0.40 cached input, USD 20 output; Terra USD 2, USD 0.20, USD 12; Luna USD 0.20, USD 0.02, USD 1.20.
+**REQUIRES VERIFICATION**: Pricing, account access, rate limits, regional availability, promotion dates, and the service tier returned by the production project remain external and time-sensitive.
 
-**REQUIRES VERIFICATION**: Prices are time-sensitive and Sol pricing is described as promotional through at least 21 November 2026. Account access, regional availability, snapshots, rate limits, data-retention settings, and exact billing treatment must be checked immediately before implementation. These values must not be treated as permanent source constants.
+## 3. Why this policy
 
-## 3. Proposed behaviour
+**CONFIRMED**: The USD 5 cap makes unrestricted flagship use inappropriate. Luna costs a small fraction of Sol and is suitable for frequent routine work. Sol is reserved for requests where ambiguity, consequences, drafting quality, or multi-factor reasoning justify its higher price.
 
-**PROPOSED**: Introduce model roles, not model sprawl:
+**INFERRED**: This mix should provide better perceived speed and reasoning per dollar than using one model for every task. Production latency and quality telemetry are needed to quantify the benefit.
 
-| Role | Work | Initial evaluation candidates | Default release posture |
-|---|---|---|---|
-| FAST | classification, lightweight extraction, compact routine summaries | current `gpt-5-mini`; GPT-5.6 Luna | Remain on current model until parity/cost evaluation |
-| EXECUTIVE | ambiguous multi-factor work, sensitive drafts, calendar reasoning, decision support | GPT-5.6 Terra; GPT-5.6 Sol as quality benchmark | Select only after behavioural and tool-safety gates |
-| BRIEFING | evidence-based morning note | GPT-5.6 Terra or Luna depending measured quality | Separate role and budget, deterministic fallback |
-| BACKGROUND | future event classification/pattern detection | GPT-5.6 Luna or no model | Disabled until proactive phase |
+## 4. Implementation approach
 
-This table is an evaluation plan, not a production model decision.
+The deterministic response classifier selects one of four model roles. The model cannot select its own role, service tier, budget, or tool access. The provider sends bounded Hermes-owned context to Responses with `store: false`.
 
-**PROPOSED** configuration:
+For a function-tool loop, Hermes requests encrypted reasoning output and replays the returned provider items only in memory with the corresponding function result. These items are not stored in the conversation database, shown to the Director, or written to logs. Parallel function calls are disabled so one ordered workflow remains easy to validate and audit.
 
-```dotenv
-OPENAI_FAST_MODEL=
-OPENAI_EXECUTIVE_MODEL=
-OPENAI_BRIEFING_MODEL=
-OPENAI_BACKGROUND_MODEL=
-OPENAI_DEFAULT_REASONING_EFFORT=low
-OPENAI_EXECUTIVE_REASONING_EFFORT=medium
-OPENAI_MONTHLY_BUDGET_USD=5
-OPENAI_INTERACTIVE_BUDGET_USD=
-OPENAI_BRIEFING_BUDGET_USD=
-OPENAI_BACKGROUND_BUDGET_USD=0
-```
+All function arguments are still validated in Hermes immediately before execution. A mutating tool still creates an exact, expiring approval record and stops the model loop. No model or API setting can execute the action directly.
 
-Legacy `OPENAI_MODEL` remains the fallback during migration. Empty role values inherit it.
+## 5. Affected files
 
-## 4. Reason for change
+- `apps/api/src/ai/openai.ts`: Responses request/response mapping and stateless reasoning continuation.
+- `apps/api/src/ai/provider.ts`: ephemeral provider state and actual service-tier result.
+- `apps/api/src/ai/policy.ts`: purpose model, reasoning, tier, and budget policy.
+- `apps/api/src/ai/cost.ts`: current model rates and Fast-tier multiplier.
+- `apps/api/src/config/env.ts`: safe production defaults and validation.
+- `apps/api/src/agent/orchestrator.ts`: provider-state continuation and tier attribution.
+- `apps/api/src/dashboard/briefing.ts`: briefing tier attribution.
+- `apps/api/src/observability/telemetry.ts`: allowlisted service-tier telemetry.
+- `supabase/functions/api/index.ts`: Edge secret forwarding.
+- `.env.example`, `docs/AI_AGENT.md`: deployment contract.
 
-**PROPOSED rationale**:
+## 6. Database changes
 
-- Counting unread mail should not pay the latency/cost of the best reasoning model.
-- A sensitive board-level draft should not be limited by settings chosen for routine classification.
-- Briefings require a predictable format and budget separate from interactive work.
-- Background work must never silently consume the interactive allowance.
-- A model upgrade must be evaluated as a system change involving context, tools, and validation, not assumed to solve all quality problems.
+Migration `0013_openai_responses.sql` adds nullable `ai_usage.service_tier` and a time-ordered partial index. It is additive. Existing rows remain valid and older application versions ignore the new column.
 
-## 5. Implementation approach
+No prompts, reasoning content, email bodies, or tool arguments are added to usage records.
 
-### 5.1 Policy contract
+## 7. API changes
 
-**PROPOSED**: Define `ModelRole`, `ModelPolicyInput`, and `ResolvedModelPolicy`. Inputs include response mode, request complexity, sensitivity, tool category, iteration number, remaining budgets, and feature flags. Output includes provider, model, API path, reasoning effort, completion limit, purpose, and fallback chain.
+The browser chat request and response shapes are unchanged. Setup and authenticated AI status now include the effective service tier for each internal model role. These diagnostics do not expose the OpenAI key.
 
-Policy is deterministic and testable. The model never chooses its own role or reasoning budget.
+The model provider has changed from Chat Completions to Responses. This is an internal server boundary and does not grant any hosted OpenAI tools.
 
-### 5.2 API path
+## 8. Security implications
 
-**PROPOSED**: Do not combine model upgrade and API migration in one release. First make the provider model-configurable while retaining Chat Completions. Then implement a Responses adapter behind the same provider contract and run parity tests for:
+- `store: false` prevents Hermes from relying on OpenAI-hosted conversation state.
+- Reasoning continuation is opaque, ephemeral, and never exposed.
+- Tool results remain untrusted data inside the system prompt boundary.
+- The relevant-tool selector remains in control; the model receives no arbitrary HTTP tool.
+- Parallel function calls are disabled to preserve ordered validation and the single-pending-approval rule.
+- Existing approval, tenant, allowlist, claim, sanitisation, and Microsoft Graph boundaries remain unchanged.
 
-- function/tool definitions and parallel calls;
-- tool result continuation;
-- reasoning effort fields;
-- cancellation and timeout;
-- token/cached-token usage reporting;
-- refusal and empty-output handling;
-- exact action-claim evidence;
-- multi-iteration context behaviour.
+## 9. Cost implications
 
-Use Responses only when it demonstrates equal or better approval/tool safety and accurate accounting. The installed SDK is compatible, but current Hermes code is not yet implemented against it.
+Luna standard costs USD 1.40 for one million uncached input plus one million output tokens at the currently published rates. Sol standard costs USD 24 for the same token mix. Sol Fast is accounted at USD 48 for that mix.
 
-### 5.3 Adaptive completion policy
+The dollar figures are illustrative, not a usage forecast. Hermes charges cached and fresh input separately, uses the actual returned service tier, and refuses new model calls once either the relevant category cap or the global USD 5 cap is reached. Unknown models remain pessimistically priced.
 
-**PROPOSED**: Replace call-site constants with tested response-mode ranges. Initial ceilings for evaluation, not production promises:
+## 10. Failure cases
 
-- Direct: 250 to 450 tokens.
-- Action preview/result/error: 300 to 600 tokens, usually much shorter.
-- Draft: 800 to 1,500 tokens or bounded by the requested communication.
-- Executive: 1,200 to 2,500 tokens.
-- Briefing: 800 to 1,200 tokens.
+- Model unavailable: return a safe service-unavailable error; do not silently switch to an unapproved model.
+- Fast downgraded or returned as another tier: record the tier OpenAI reports and cost by the known effective tier.
+- Empty or incomplete response: log metadata without content and return Hermes' safe fallback.
+- Invalid function arguments: existing schema validation rejects the call.
+- Timeout before mutation: nothing changes.
+- Uncertain Microsoft mutation result: do not retry blindly or claim success.
+- Usage recording failure: report it to server logs; the action result is not falsified.
+- Missing database migration: usage insertion fails safely, but release validation must block deployment until migration 0013 is present.
 
-The policy should request less by default and raise the ceiling only when the mode justifies it. A maximum is not a target length.
+## 11. Tests
 
-### 5.4 Cost attribution
+- Model role, reasoning, and service-tier selection.
+- Responses payload fields and GPT-5 reasoning configuration.
+- Function definition conversion.
+- Stateless encrypted reasoning replay through a function call and output.
+- Responses usage and actual service-tier parsing.
+- Luna, Sol, cached-token, Fast-tier, snapshot, and unknown-model pricing.
+- Global and category budget guards.
+- Existing unit, integration, behavioural, approval, action-claim, and Microsoft Graph safety suites.
 
-**PROPOSED**: Record user request, conversation, workflow, model role, response mode, iteration, and briefing/proactive event. Calculate prices from a versioned model-rate catalog with effective dates. Unknown models remain pessimistically priced and may be denied in production until configured.
+## 12. Acceptance criteria
 
-### 5.5 Quality evaluation
+- Routine and executive requests resolve to the documented model policies.
+- Sol can reason across a Hermes function-tool loop through Responses.
+- No provider reasoning state is persisted or logged.
+- Actual service tier affects cost accounting.
+- The global USD 5 hard cap and zero background cap remain active.
+- Every mutating Microsoft 365 operation still requires an exact stored approval.
+- Type checks, automated tests, behavioural evaluation, Edge build, model availability smoke tests, and live deployment checks pass.
 
-**PROPOSED**: Run fixed scenarios through candidate policies. Score correctness, tool choice, argument accuracy, unsupported claims, approval compliance, naturalness, latency, input/output tokens, and calculated cost. A model wins only if the end-to-end workflow improves.
+## 13. Migration and rollback
 
-## 6. Affected files
+1. Apply migration 0013.
+2. Deploy the Responses-compatible Edge bundle.
+3. Set role models, reasoning, service tiers, and category budgets.
+4. Verify setup/status and run read-only live smoke checks.
 
-**PROPOSED**:
+Rollback is configuration-first: set executive, fast, and briefing roles to a known Responses-compatible fallback with reasoning `none` and service tier `default`. If code rollback is required, the additive database column is retained. Rolling back the database is unnecessary and would remove useful cost audit data.
 
-- `apps/api/src/config/env.ts`, `.env.example`, setup/status responses.
-- `apps/api/src/ai/provider.ts`, `openai.ts`, `index.ts`, `cost.ts`.
-- New `apps/api/src/ai/policy.ts` and optionally `responses.ts`.
-- `agent/orchestrator.ts`, `dashboard/briefing.ts`, future proactive runner.
-- Shared types, setup UI, docs, and tests/evaluation fixtures.
+## 14. Further work
 
-## 7. Database changes
-
-**PROPOSED**: Add nullable request/conversation/workflow/model-role/response-mode columns to `ai_usage`, plus an effective pricing version or rate identifier. Consider category-budget state as configuration rather than mutable database data initially. If administrator-editable budgets are later required, store them in tenant/user settings with validation and audit.
-
-No conversation content is added to usage rows.
-
-## 8. API changes
-
-**PROPOSED**:
-
-- `GET /api/setup` and authenticated status report configured role names, effective fallback, and category budget status without exposing API keys.
-- Assistant responses may include a non-user-facing policy/version identifier for diagnostics, but the UI should not display internal model names in normal conversation.
-- Preserve existing chat request shape.
-
-## 9. Security implications
-
-**PROPOSED**:
-
-- Every model/API path receives the same restricted tool set, untrusted-content framing, opaque references, approval boundary, and claim guard.
-- Fallback cannot weaken reasoning/action rules or switch to an unapproved external provider.
-- Do not send more conversation or mailbox data merely because a model supports a larger context window.
-- Redact model request bodies from ordinary logs.
-- Validate that Responses persisted-state options meet Hermes privacy requirements before use. Prefer application-owned context unless retention policy is explicitly accepted.
-
-## 10. Cost implications
-
-At current published prices, Terra output is ten times Luna output, and Sol is more expensive again. A USD 5 monthly cap makes unrestricted flagship use impractical for frequent production interaction.
-
-**PROPOSED**:
-
-- Keep deterministic fast paths at zero model cost.
-- Use the executive role only when complexity warrants it.
-- Reserve an interactive budget floor that background work cannot consume.
-- Warn at per-category thresholds and stop at hard caps.
-- Report projected spend by role.
-- Store cached input tokens distinctly and validate provider usage fields during Responses migration.
-
-**REQUIRES VERIFICATION**: Real prompt size, completion size, cache eligibility, monthly volume, and target latency. Cost recommendations must be recalculated from official prices at rollout.
-
-## 11. Failure cases
-
-- Configured model unavailable or not entitled: fail over only to configured compatible fallback and report degraded capability.
-- SDK accepts a field that the selected model rejects: compatibility matrix and contract test block deployment.
-- Higher reasoning consumes the output budget before a useful answer: measure and set role-specific limits.
-- Responses usage differs from Chat Completions: do not release until cost accounting reconciles.
-- Model policy loops between fallbacks: one ordered attempt chain with bounded retries.
-- Budget database unavailable: choose a conservative configurable failure mode; production should deny discretionary/background calls rather than assume free capacity.
-- Quality improves but action argument accuracy drops: reject the candidate regardless of prose quality.
-
-## 12. Tests
-
-**PROPOSED**:
-
-- Unit tests for environment fallback, role resolution, reasoning/limit payloads, pricing effective dates, category caps, and unknown models.
-- Provider contract tests for Chat Completions and Responses with recorded/fake responses.
-- Integration tests for multi-tool loops, cancellation, retry, timeout, refusal, malformed tool arguments, and usage recording.
-- Behavioural A/B evaluations using the same 100+ fixtures.
-- Budget exhaustion at global and category levels.
-- Regression tests proving no mutating tool bypasses approval under any role/API path.
-
-## 13. Acceptance criteria
-
-- Model choice is configurable per purpose with legacy fallback.
-- The selected API payload is documented and validated for every enabled model.
-- Usage and cost reconcile with provider token fields.
-- Global and category budgets stop calls deterministically.
-- Background budget defaults to zero until enabled.
-- Executive scenarios improve against the fixed baseline without worse action safety.
-- No model/API migration is enabled solely because it is newer.
-
-## 14. Migration and rollback strategy
-
-**PROPOSED**:
-
-1. Add role configuration inheriting `OPENAI_MODEL`; behaviour remains identical.
-2. Pass model explicitly per call and expand usage attribution.
-3. Evaluate Luna, Terra, and Sol against current `gpt-5-mini` where account access permits.
-4. Canary the winning executive/briefing policy while FAST remains unchanged.
-5. Implement Responses as a second adapter; shadow and then canary it separately.
-6. Promote only after cost, latency, tool, and behavioural gates pass.
-
-Rollback sets all roles to `OPENAI_MODEL`, disables the Responses adapter, and retains additive usage records. No approval or Graph code changes are required to roll back a model policy.
+**PROPOSED**: Measure real latency, cost per request type, executive-task quality, and Fast-tier value over a representative period. True token streaming is not part of this migration because the deployed Supabase Edge adapter currently buffers Fastify injection responses. It should be added only with a transport design that never streams an unvalidated action claim or a model-written approval preview.

@@ -13,6 +13,11 @@ export interface ChatMessage {
   /** Present on tool results. */
   toolCallId?: string;
   name?: string;
+  /**
+   * Provider-owned continuation data for one in-memory tool loop. It is never
+   * persisted, logged, exposed to the Director, or interpreted by the agent.
+   */
+  providerState?: unknown[];
 }
 
 export interface ToolCallRequest {
@@ -34,6 +39,10 @@ export interface ChatResult {
   toolCalls: ToolCallRequest[];
   usage?: { promptTokens: number; completionTokens: number; cachedTokens?: number };
   model: string;
+  /** Processing tier OpenAI actually used, which may differ from the request. */
+  serviceTier?: string;
+  /** Stateless Responses API items needed to preserve reasoning across tools. */
+  providerState?: unknown[];
 }
 
 export interface ChatOptions {
@@ -50,6 +59,7 @@ export interface AIProvider {
   readonly id: string;
   readonly model: string;
   readonly reasoningEffort: ReasoningEffort;
+  readonly serviceTier: 'default' | 'fast';
   chat(options: ChatOptions): Promise<ChatResult>;
   /** Cheap liveness check used by the setup screen and diagnostics. */
   health(): Promise<{ ok: boolean; detail: string }>;

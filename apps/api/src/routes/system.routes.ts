@@ -1,5 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { getSetupStatus } from '../config/env.js';
+import { env, getSetupStatus } from '../config/env.js';
+import { modelPolicySummary } from '../ai/policy.js';
 import { pingDb } from '../db/index.js';
 import { requireAuth, ownDomainOf } from '../auth/session.js';
 import { UserService } from '../graph/user.service.js';
@@ -15,6 +16,12 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
 
     return {
       ...setup,
+      ai: {
+        provider: 'openai' as const,
+        model: env.OPENAI_MODEL,
+        roles: modelPolicySummary(),
+        adaptiveResponseLimits: env.HERMES_RESPONSE_MODES,
+      },
       checks: setup.checks.map((c) =>
         c.key === 'database' ? { ...c, ready: db.ok, detail: db.ok ? 'Connected' : c.detail } : c,
       ),

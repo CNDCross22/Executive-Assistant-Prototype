@@ -30,6 +30,7 @@ export interface TelemetryEvent {
   workflowId?: string;
   model?: string;
   modelRole?: ModelRole;
+  serviceTier?: string;
   responseMode?: ResponseMode;
   budgetCategory?: BudgetCategory;
   purpose?: string;
@@ -50,7 +51,7 @@ export interface TelemetryEvent {
 }
 
 const DETAIL_KEYS = [
-  'conversationId', 'workflowId', 'model', 'modelRole', 'responseMode', 'budgetCategory',
+  'conversationId', 'workflowId', 'model', 'modelRole', 'serviceTier', 'responseMode', 'budgetCategory',
   'purpose', 'tool', 'durationMs', 'iteration', 'iterations', 'promptTokens', 'cachedTokens',
   'completionTokens', 'costMicros', 'count', 'candidateMessages', 'selectedMessages',
   'estimatedTokens', 'reasonCode',

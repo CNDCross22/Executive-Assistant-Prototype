@@ -27,7 +27,7 @@ import { RefTable } from '../agent/refs.js';
 import { scoreMessage, looksAutomated, type TriageContext } from '../mail/triage.js';
 import { selectSkills, toolsForSkills } from '../agent/skills.js';
 import { costMicros } from '../ai/cost.js';
-import { tokenLimitOptions } from '../ai/openai.js';
+import { responseGenerationOptions } from '../ai/openai.js';
 import { toAppError, isUuid, Errors } from '../lib/errors.js';
 import { safeRequestUrl } from '../lib/logger.js';
 import { normaliseApprovalPayload, parseApprovalDecision, requiresApproval } from '../agent/approvals.js';
@@ -396,17 +396,17 @@ describe('cost — the budget must be knowable', () => {
   });
 });
 
-describe('OpenAI request compatibility', () => {
-  test('GPT-5 uses max_completion_tokens and its default temperature', () => {
-    assert.deepEqual(tokenLimitOptions('gpt-5-mini', 500, 0.3), {
-      max_completion_tokens: 500,
-      reasoning_effort: 'minimal',
+describe('OpenAI Responses request compatibility', () => {
+  test('GPT-5 uses max_output_tokens and structured reasoning effort', () => {
+    assert.deepEqual(responseGenerationOptions('gpt-5-mini', 500, 0.3), {
+      max_output_tokens: 500,
+      reasoning: { effort: 'none' },
     });
   });
 
-  test('older chat models retain legacy token and temperature fields', () => {
-    assert.deepEqual(tokenLimitOptions('gpt-4o-mini', 500, 0.3), {
-      max_tokens: 500,
+  test('older models retain temperature on the Responses API', () => {
+    assert.deepEqual(responseGenerationOptions('gpt-4o-mini', 500, 0.3), {
+      max_output_tokens: 500,
       temperature: 0.3,
     });
   });

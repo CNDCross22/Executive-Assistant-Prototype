@@ -4,11 +4,13 @@ import type { ResponseMode } from '../agent/response-policy.js';
 export type ModelRole = 'fast' | 'executive' | 'briefing' | 'background';
 export type ReasoningEffort = 'none' | 'minimal' | 'low' | 'medium' | 'high' | 'xhigh' | 'max';
 export type BudgetCategory = 'interactive' | 'briefing' | 'background';
+export type ServiceTier = 'default' | 'fast';
 
 export interface ModelPolicy {
   role: ModelRole;
   model: string;
   reasoningEffort: ReasoningEffort;
+  serviceTier: ServiceTier;
   budgetCategory: BudgetCategory;
 }
 
@@ -38,6 +40,16 @@ export function reasoningEffortForRole(role: ModelRole): ReasoningEffort {
   return configured[role] ?? env.OPENAI_REASONING_EFFORT;
 }
 
+export function serviceTierForRole(role: ModelRole): ServiceTier {
+  const configured: Record<ModelRole, ServiceTier | undefined> = {
+    fast: env.OPENAI_FAST_SERVICE_TIER,
+    executive: env.OPENAI_EXECUTIVE_SERVICE_TIER,
+    briefing: env.OPENAI_BRIEFING_SERVICE_TIER,
+    background: env.OPENAI_BACKGROUND_SERVICE_TIER,
+  };
+  return configured[role] ?? env.OPENAI_SERVICE_TIER;
+}
+
 export function budgetCategoryForRole(role: ModelRole): BudgetCategory {
   if (role === 'briefing') return 'briefing';
   if (role === 'background') return 'background';
@@ -50,15 +62,20 @@ export function resolveModelPolicy(mode: ResponseMode): ModelPolicy {
     role,
     model: modelForRole(role),
     reasoningEffort: reasoningEffortForRole(role),
+    serviceTier: serviceTierForRole(role),
     budgetCategory: budgetCategoryForRole(role),
   };
 }
 
-export function modelPolicySummary(): Record<ModelRole, { model: string; reasoningEffort: ReasoningEffort }> {
+export function modelPolicySummary(): Record<ModelRole, {
+  model: string;
+  reasoningEffort: ReasoningEffort;
+  serviceTier: ServiceTier;
+}> {
   return {
-    fast: { model: modelForRole('fast'), reasoningEffort: reasoningEffortForRole('fast') },
-    executive: { model: modelForRole('executive'), reasoningEffort: reasoningEffortForRole('executive') },
-    briefing: { model: modelForRole('briefing'), reasoningEffort: reasoningEffortForRole('briefing') },
-    background: { model: modelForRole('background'), reasoningEffort: reasoningEffortForRole('background') },
+    fast: { model: modelForRole('fast'), reasoningEffort: reasoningEffortForRole('fast'), serviceTier: serviceTierForRole('fast') },
+    executive: { model: modelForRole('executive'), reasoningEffort: reasoningEffortForRole('executive'), serviceTier: serviceTierForRole('executive') },
+    briefing: { model: modelForRole('briefing'), reasoningEffort: reasoningEffortForRole('briefing'), serviceTier: serviceTierForRole('briefing') },
+    background: { model: modelForRole('background'), reasoningEffort: reasoningEffortForRole('background'), serviceTier: serviceTierForRole('background') },
   };
 }

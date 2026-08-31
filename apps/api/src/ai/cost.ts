@@ -60,15 +60,18 @@ export interface Usage {
 }
 
 /** Cost of one call, in micro-dollars. */
-export function costMicros(model: string, usage: Usage): number {
+export function costMicros(model: string, usage: Usage, serviceTier: string = 'default'): number {
   const rate = rateFor(model);
+  // OpenAI reports `priority` after a request for Fast mode. Fast processing
+  // is currently billed at twice the standard Sol input/output rates.
+  const tierMultiplier = serviceTier === 'priority' || serviceTier === 'fast' ? 2 : 1;
   const cached = usage.cachedTokens ?? 0;
   const fresh = Math.max(0, usage.promptTokens - cached);
 
   const usd =
-    (fresh / 1_000_000) * rate.input +
-    (cached / 1_000_000) * rate.cachedInput +
-    (usage.completionTokens / 1_000_000) * rate.output;
+    ((fresh / 1_000_000) * rate.input +
+      (cached / 1_000_000) * rate.cachedInput +
+      (usage.completionTokens / 1_000_000) * rate.output) * tierMultiplier;
 
   return Math.round(usd * 1_000_000);
 }
@@ -86,6 +89,7 @@ let memoryCalls = 0;
 export interface RecordArgs {
   userId?: string;
   model: string;
+  serviceTier?: string;
   purpose?: string;
   budgetCategory?: BudgetCategory;
   requestId?: string;
@@ -99,7 +103,7 @@ export interface RecordArgs {
 }
 
 export async function recordUsage(args: RecordArgs): Promise<number> {
-  const micros = costMicros(args.model, args.usage);
+  const micros = costMicros(args.model, args.usage, args.serviceTier);
   const budgetCategory = args.budgetCategory ?? (args.purpose === 'briefing' ? 'briefing' : 'interactive');
 
   if (!hasDb()) {
@@ -123,12 +127,12 @@ export async function recordUsage(args: RecordArgs): Promise<number> {
     await db`
       insert into ai_usage (
         user_id, provider, model, purpose, budget_category, request_id, conversation_id, workflow_id,
-        model_role, response_mode, iteration, prompt_tokens, cached_tokens, completion_tokens, cost_micros, duration_ms
+        model_role, response_mode, service_tier, iteration, prompt_tokens, cached_tokens, completion_tokens, cost_micros, duration_ms
       )
       values (
         ${args.userId ?? null}, ${'openai'}, ${args.model}, ${args.purpose ?? 'chat'}, ${budgetCategory},
         ${args.requestId ?? null}, ${args.conversationId ?? null}, ${args.workflowId ?? null},
-        ${args.modelRole ?? null}, ${args.responseMode ?? null}, ${args.iteration ?? null},
+        ${args.modelRole ?? null}, ${args.responseMode ?? null}, ${args.serviceTier ?? null}, ${args.iteration ?? null},
         ${args.usage.promptTokens}, ${args.usage.cachedTokens ?? 0}, ${args.usage.completionTokens},
         ${micros}, ${args.durationMs ?? null}
       )

@@ -1,20 +1,32 @@
 import OpenAI from 'openai';
+import type {
+  FunctionTool,
+  ResponseInput,
+  ResponseInputItem,
+} from 'openai/resources/responses/responses';
 import type { AIProvider, ChatOptions, ChatResult, ChatMessage, ToolDefinition } from './provider.js';
-import type { ReasoningEffort } from './policy.js';
+import type { ReasoningEffort, ServiceTier } from './policy.js';
 import { logger } from '../lib/logger.js';
 
-export function tokenLimitOptions(
+export function responseGenerationOptions(
   model: string,
   maxTokens: number,
   temperature: number,
-  reasoningEffort: ReasoningEffort = 'minimal',
+  reasoningEffort: ReasoningEffort = 'none',
 ) {
   return /^gpt-5(?:[.-]|$)/i.test(model)
-    ? { max_completion_tokens: maxTokens, reasoning_effort: reasoningEffort }
-    : { max_tokens: maxTokens, temperature };
+    ? { max_output_tokens: maxTokens, reasoning: { effort: reasoningEffort } }
+    : { max_output_tokens: maxTokens, temperature };
 }
 
-/** The application's single model integration: the official OpenAI API. */
+/**
+ * OpenAI Responses API integration.
+ *
+ * Hermes manages its own bounded conversation context and keeps Responses
+ * stateless (`store: false`). Encrypted reasoning items are replayed only
+ * inside the current in-memory tool loop so Sol can reason across function
+ * calls without persisting chain-of-thought in Hermes or at OpenAI.
+ */
 export class OpenAIProvider implements AIProvider {
   readonly id = 'openai';
   private readonly client: OpenAI;
@@ -22,74 +34,113 @@ export class OpenAIProvider implements AIProvider {
   constructor(
     readonly model: string,
     apiKey: string,
-    readonly reasoningEffort: ReasoningEffort = 'minimal',
+    readonly reasoningEffort: ReasoningEffort = 'none',
+    readonly serviceTier: ServiceTier = 'default',
   ) {
     this.client = new OpenAI({ apiKey, timeout: 180_000, maxRetries: 2 });
   }
 
-  private toApiMessages(messages: ChatMessage[]): OpenAI.Chat.ChatCompletionMessageParam[] {
-    return messages.map((message) => {
+  private toApiInput(messages: ChatMessage[]): ResponseInput {
+    const input: ResponseInput = [];
+
+    for (const message of messages) {
       if (message.role === 'tool') {
-        return { role: 'tool', content: message.content, tool_call_id: message.toolCallId ?? '' };
+        input.push({
+          type: 'function_call_output',
+          call_id: message.toolCallId ?? '',
+          output: message.content,
+        });
+        continue;
       }
+
+      if (message.role === 'assistant' && message.providerState?.length) {
+        // These items came directly from response.output. The Responses API
+        // explicitly permits replaying them as input for stateless tool loops.
+        input.push(...(message.providerState as ResponseInputItem[]));
+        continue;
+      }
+
       if (message.role === 'assistant' && message.toolCalls?.length) {
-        return {
-          role: 'assistant',
-          content: message.content || null,
-          tool_calls: message.toolCalls.map((toolCall) => ({
-            id: toolCall.id,
-            type: 'function' as const,
-            function: { name: toolCall.name, arguments: toolCall.arguments },
-          })),
-        };
+        for (const toolCall of message.toolCalls) {
+          input.push({
+            type: 'function_call',
+            call_id: toolCall.id,
+            name: toolCall.name,
+            arguments: toolCall.arguments,
+          });
+        }
+        continue;
       }
-      return { role: message.role, content: message.content } as OpenAI.Chat.ChatCompletionMessageParam;
-    });
+
+      input.push({ role: message.role, content: message.content });
+    }
+
+    return input;
   }
 
-  private toApiTools(tools: ToolDefinition[]): OpenAI.Chat.ChatCompletionTool[] {
+  private toApiTools(tools: ToolDefinition[]): FunctionTool[] {
     return tools.map((tool) => ({
       type: 'function',
-      function: { name: tool.name, description: tool.description, parameters: tool.parameters },
+      name: tool.name,
+      description: tool.description,
+      parameters: tool.parameters,
+      // Hermes validates every call with Zod immediately before execution.
+      // Existing schemas are not all compatible with OpenAI strict mode.
+      strict: false,
     }));
   }
 
   async chat(options: ChatOptions): Promise<ChatResult> {
     const { messages, tools, temperature = 0.2, maxTokens = 1200, signal } = options;
-    const completion = await this.client.chat.completions.create(
+    const response = await this.client.responses.create(
       {
         model: this.model,
-        messages: this.toApiMessages(messages),
-        ...(tools?.length ? { tools: this.toApiTools(tools), tool_choice: 'auto' } : {}),
-        // GPT-5 chat models use max_completion_tokens and only accept their
-        // default sampling temperature. Older models retain the legacy fields.
-        ...tokenLimitOptions(this.model, maxTokens, temperature, options.reasoningEffort ?? this.reasoningEffort),
+        input: this.toApiInput(messages),
+        ...(tools?.length ? { tools: this.toApiTools(tools), tool_choice: 'auto' as const } : {}),
+        parallel_tool_calls: false,
+        service_tier: this.serviceTier,
+        store: false,
+        include: ['reasoning.encrypted_content'],
+        ...responseGenerationOptions(
+          this.model,
+          maxTokens,
+          temperature,
+          options.reasoningEffort ?? this.reasoningEffort,
+        ),
       },
       { signal },
     );
 
-    const raw = completion.choices[0]?.message;
-    if (!raw?.content && !raw?.tool_calls?.length) {
+    const toolCalls = response.output.flatMap((item) =>
+      item.type === 'function_call'
+        ? [{ id: item.call_id, name: item.name, arguments: item.arguments || '{}' }]
+        : [],
+    );
+    if (!response.output_text && toolCalls.length === 0) {
       logger.warn(
-        { model: completion.model, finishReason: completion.choices[0]?.finish_reason, usage: completion.usage },
-        'OpenAI returned an empty assistant message',
+        {
+          model: response.model,
+          status: response.status,
+          incompleteReason: response.incomplete_details?.reason,
+          usage: response.usage,
+        },
+        'OpenAI returned an empty assistant response',
       );
     }
+
     return {
-      content: raw?.content ?? '',
-      toolCalls: (raw?.tool_calls ?? []).flatMap((call) =>
-        'function' in call
-          ? [{ id: call.id, name: call.function.name, arguments: call.function.arguments || '{}' }]
-          : [],
-      ),
-      usage: completion.usage
+      content: response.output_text ?? '',
+      toolCalls,
+      usage: response.usage
         ? {
-            promptTokens: completion.usage.prompt_tokens,
-            completionTokens: completion.usage.completion_tokens,
-            cachedTokens: completion.usage.prompt_tokens_details?.cached_tokens ?? 0,
+            promptTokens: response.usage.input_tokens,
+            completionTokens: response.usage.output_tokens,
+            cachedTokens: response.usage.input_tokens_details.cached_tokens ?? 0,
           }
         : undefined,
-      model: completion.model ?? this.model,
+      model: response.model ?? this.model,
+      serviceTier: response.service_tier ?? undefined,
+      providerState: response.output,
     };
   }
 
