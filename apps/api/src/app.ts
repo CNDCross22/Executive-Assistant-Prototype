@@ -76,7 +76,7 @@ export async function buildApp() {
         .send({ error: { code: 'too_large', message: 'That request was too large.' } });
     }
 
-    if ((error as { code?: string }).code === 'FST_ERR_CTP_INVALID_JSON_BODY') {
+    if (['FST_ERR_CTP_INVALID_JSON_BODY', 'FST_ERR_CTP_EMPTY_JSON_BODY'].includes((error as { code?: string }).code ?? '')) {
       return reply
         .status(400)
         .send({ error: { code: 'bad_request', message: 'That request was not valid JSON.' } });

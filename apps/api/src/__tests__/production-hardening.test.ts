@@ -2,6 +2,7 @@ import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GraphClient, graphRetryDelayMs } from '../graph/client.js';
 import { emailIsAllowed, env, getSetupStatus, productionConfigurationIssues, type Env } from '../config/env.js';
+import { buildApp } from '../app.js';
 
 function production(overrides: Partial<Env> = {}): Env {
   return {
@@ -87,6 +88,22 @@ describe('Phase 7 Microsoft Graph retry safety', () => {
 });
 
 describe('Phase 7 production identity and configuration', () => {
+  test('an empty JSON entity is a safe client error rather than an internal failure', async () => {
+    const app = await buildApp();
+    try {
+      const response = await app.inject({
+        method: 'DELETE',
+        url: '/api/health',
+        headers: { 'content-type': 'application/json' },
+        payload: Buffer.alloc(0),
+      });
+      assert.equal(response.statusCode, 400);
+      assert.equal(response.json().error.code, 'bad_request');
+    } finally {
+      await app.close();
+    }
+  });
+
   test('the Director allowlist fails closed and compares addresses case-insensitively', () => {
     assert.equal(emailIsAllowed('director@example.com', []), false);
     assert.equal(emailIsAllowed('Director@Example.com', ['director@example.com']), true);

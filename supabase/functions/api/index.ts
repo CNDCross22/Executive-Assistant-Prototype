@@ -95,13 +95,22 @@ function routeUrl(requestUrl: string): string {
 
 Deno.serve(async (request) => {
   const routedUrl = routeUrl(request.url);
-  const payload = ['GET', 'HEAD'].includes(request.method)
+  const bodyBytes = ['GET', 'HEAD'].includes(request.method)
     ? undefined
     : Buffer.from(await request.arrayBuffer());
+  const payload = bodyBytes?.byteLength ? bodyBytes : undefined;
+  const requestHeaders = Object.fromEntries(request.headers.entries());
+  // Supabase's gateway may attach application/json to a bodyless DELETE.
+  // Fastify correctly rejects that combination before the route can run, so
+  // omit entity headers when there is no entity to parse.
+  if (!payload) {
+    delete requestHeaders['content-type'];
+    delete requestHeaders['content-length'];
+  }
   const result = await app.inject({
     method: request.method,
     url: routedUrl,
-    headers: Object.fromEntries(request.headers.entries()),
+    headers: requestHeaders,
     payload,
   });
 

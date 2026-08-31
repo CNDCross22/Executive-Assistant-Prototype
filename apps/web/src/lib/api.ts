@@ -59,7 +59,10 @@ export const api = {
     request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) =>
     request<T>(path, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) }),
-  del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
+  // Supabase's Edge gateway labels DELETE requests as JSON. Send an explicit
+  // empty object so Fastify receives valid JSON instead of rejecting an empty
+  // JSON entity before the authenticated route can run.
+  del: <T>(path: string) => request<T>(path, { method: 'DELETE', body: '{}' }),
 };
 
 export const loginUrl = `${API_BASE}/api/auth/login`;
