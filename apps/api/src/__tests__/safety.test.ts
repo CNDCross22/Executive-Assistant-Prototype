@@ -112,6 +112,22 @@ describe('capability guard — implemented Microsoft 365 actions reach safe tool
   }
 });
 
+describe('capability guard — unsupported mutations fail honestly', () => {
+  test('read-only integration changes are refused without a model call', () => {
+    for (const request of [
+      'Post a message in the Teams channel.',
+      'Delete this OneDrive file.',
+      'Upload this document to SharePoint.',
+    ]) {
+      const result = checkCapability(request);
+      assert.ok(result, request);
+      assert.equal(result.iterations, 0);
+      assert.match(result.reply, /cannot change it/i);
+      assert.match(result.reply, /Nothing was changed/i);
+    }
+  });
+});
+
 // ------------------------------------------------------------ claim guard ---
 
 describe('claim guard — never lets an unbacked claim through', () => {

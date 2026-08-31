@@ -182,6 +182,41 @@ const calendarList = defineTool({
   },
 });
 
+const calendarUpcoming = defineTool({
+  name: 'calendar_upcoming',
+  description: 'Give a reliable upcoming-calendar summary without requiring the model to invent a date range. Use this for requests such as "what is coming up", "summarise my calendar", or "do I have upcoming events". It checks from now through the requested number of days in the Director timezone. This is read-only.',
+  riskLevel: 0,
+  capability: 'calendar_read',
+  schema: z.object({
+    days: z.number().int().min(1).max(60).default(14),
+    limit: z.number().int().min(1).max(100).default(50),
+  }),
+  parameters: objectSchema({
+    days: { type: 'integer', minimum: 1, maximum: 60, default: 14, description: 'Number of upcoming days to inspect. Use 14 when the Director gives no period.' },
+    limit: { type: 'integer', minimum: 1, maximum: 100, default: 50, description: 'Maximum events returned.' },
+  }),
+  summarise: (a) => `Checked the next ${a.days} days of the calendar`,
+  async execute(a, ctx) {
+    const start = new Date();
+    const end = new Date(start.getTime() + a.days * 86_400_000);
+    const events = await ctx.calendar.list(start.toISOString(), end.toISOString(), ctx.user.timezone, a.limit);
+    return {
+      count: events.length,
+      period: {
+        start: start.toISOString(),
+        end: end.toISOString(),
+        days: a.days,
+        timezone: ctx.user.timezone,
+      },
+      truncated: events.length >= a.limit,
+      events: events.map((event) => ({ ...event, ref: ctx.refs.ref(event.id), id: undefined })),
+      note: events.length
+        ? 'These are verified upcoming Microsoft 365 calendar events. No event has been changed.'
+        : `No events were found in the next ${a.days} days. No event has been changed.`,
+    };
+  },
+});
+
 const calendarSearch = defineTool({
   name: 'calendar_search',
   description: 'Search the Director\'s default calendar by event subject when the date is unknown or the Director asks to search the whole calendar. This is read-only. It returns single events and recurring-series masters; when a particular recurring occurrence or date is meant, verify it with calendar_list before changing it.',
@@ -373,7 +408,7 @@ const calendarUpdate = defineTool({
 
 const calendarDelete = defineTool({
   name: 'calendar_delete', description: 'Delete or cancel one exact referenced calendar event. Find it with calendar_list or calendar_search first. This always creates a destructive-action approval and never executes immediately.', riskLevel: 3, capability: 'calendar_write',
-  schema: z.object({ eventRef: ref, title: z.string().max(300).default('Selected event') }), parameters: objectSchema({ eventRef: { type: 'string' }, title: { type: 'string' } }, ['eventRef']), summarise: () => 'Deleted the selected calendar event',
+  schema: z.object({ eventRef: ref, title: z.string().max(300).default('Selected event') }), parameters: objectSchema({ eventRef: { type: 'string' }, title: { type: 'string' } }, ['eventRef']), summarise: (a) => `Deleted calendar event: ${a.title}`,
   preview: async (a, ctx) => { const event = await ctx.calendar.get(resolve(a.eventRef, ctx)); return { title: event.type === 'seriesMaster' ? 'Delete this recurring series?' : 'Delete this calendar event?', summary: event.subject, details: [{ label: 'When', value: formatCalendarRange(event.start, event.end, event.timezone) }, ...(event.type === 'seriesMaster' ? [{ label: 'Scope', value: 'Entire recurring series' }] : []), ...(event.location ? [{ label: 'Where', value: event.location }] : []), ...(event.attendees.length ? [{ label: 'Attendees', value: event.attendees.map((attendee) => attendee.name || attendee.address).join(', ') }] : [])], warning: `${event.type === 'seriesMaster' ? 'This removes every occurrence in the recurring series. ' : 'This removes the event. '}${event.attendees.length ? 'If you organised the meeting, Outlook sends cancellation notices to attendees.' : 'This cannot be undone in Hermes.'}` }; },
   async execute(a, ctx) { await ctx.calendar.delete(resolve(a.eventRef, ctx)); return { deleted: true }; },
 });
@@ -455,7 +490,7 @@ const taskDelete = defineTool({
 
 export const officeTools: Tool<never>[] = [
   profileRead, mailFolders, mailDraft, mailReplyDraft, mailSend, mailReply, mailForward, mailSendDraft, mailState, mailMove, mailDelete,
-  mailboxGet, mailboxUpdate, calendarList, calendarSearch, calendarFindSlots, calendarCreate, calendarUpdate, calendarDelete, calendarRespond,
+  mailboxGet, mailboxUpdate, calendarUpcoming, calendarList, calendarSearch, calendarFindSlots, calendarCreate, calendarUpdate, calendarDelete, calendarRespond,
   contactsSearch, peopleSearch, directorySearch, contactCreate, contactUpdate, contactDelete,
   taskLists, taskList, taskCreate, taskUpdate, taskDelete,
 ] as unknown as Tool<never>[];

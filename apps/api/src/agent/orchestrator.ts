@@ -21,14 +21,13 @@ import {
 import { recall, markUsed } from '../memory/store.js';
 import { observeFromMessage } from '../memory/learning.js';
 import { parseExplicitMemory } from '../memory/explicit.js';
-import { selectSkills, toolsForSkills } from './skills.js';
 import { finishApproval, parseApprovalDecision, pendingApproval, type PendingApproval } from './approvals.js';
 import type { ActionPreview } from './tools/types.js';
 import { classifyResponseMode, responsePolicy } from './response-policy.js';
 import { resolveModelPolicy } from '../ai/policy.js';
 import { recordTelemetry } from '../observability/telemetry.js';
 import { assembleContext, type ContextTurn } from './context.js';
-import { interpretRequest } from './request-intent.js';
+import { interpretRequest, permittedToolsForIntent } from './request-intent.js';
 
 const MAX_ITERATIONS = 6;
 const TURN_TIMEOUT_MS = 180_000;
@@ -200,7 +199,6 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
   });
   const actionGoal = unresolvedActionGoal(history, message);
   const requestIntent = interpretRequest(actionGoal ?? message, history);
-  const selectedSkills = selectSkills(`${assembled.skillQuery}\n${requestIntent.routingHint}`, 2, requestIntent.operation === 'write');
   void recordTelemetry({
     category: 'context', action: 'assembled', status: 'success', userId: ctx.user.id,
     requestId: ctx.requestId, conversationId: ctx.conversationId, workflowId: ctx.workflowId,
@@ -223,7 +221,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
           type: m.type, title: m.title, content: m.content, scope: m.scope,
           scopeRef: m.scopeRef, source: m.source, expiresAt: m.expiresAt,
         })),
-        skillQuery: assembled.skillQuery,
+        skillQuery: `${message}\n${requestIntent.routingHint}`,
         responseMode: mode,
         conversationContext: assembled,
         requestIntent,
@@ -250,11 +248,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
 
   const steps: AgentStep[] = [];
   let actionReadState: 'unknown' | 'empty' | 'found' = 'unknown';
-  const selectedToolNames = toolsForSkills(selectedSkills);
-  const readOnlyNames = new Set(availableTools().filter((tool) => tool.riskLevel === 0).map((tool) => tool.name));
-  const permittedToolNames = requestIntent.operation === 'write'
-    ? selectedToolNames
-    : selectedToolNames.filter((name) => readOnlyNames.has(name));
+  const permittedToolNames = permittedToolsForIntent(requestIntent, availableTools());
   const tools = toolDefinitions(permittedToolNames);
   const provider = aiProvider(modelPolicy.role);
 

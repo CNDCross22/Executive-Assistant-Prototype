@@ -11,9 +11,26 @@
 import type { AgentResult, AgentStep } from './orchestrator.js';
 import { interpretRequest } from './request-intent.js';
 
-/** Capability switches are enforced by the registry; supported requests proceed. */
-export function checkCapability(_message: string): AgentResult | null {
-  return null;
+/**
+ * Refuse known read-only integration mutations before paying for a model call.
+ * A model cannot turn the absence of a write tool into a reliable action.
+ */
+export function checkCapability(message: string): AgentResult | null {
+  const intent = interpretRequest(message);
+  if (intent.operation !== 'write') return null;
+  const unsupported = intent.domains.find((domain) => ['teams', 'files', 'sharepoint', 'identity'].includes(domain));
+  if (!unsupported) return null;
+  const area = unsupported === 'files' ? 'OneDrive files'
+    : unsupported === 'sharepoint' ? 'SharePoint content'
+      : unsupported === 'teams' ? 'Teams content'
+        : 'the Microsoft 365 profile';
+  return {
+    reply: `I can read ${area}, but this version cannot change it. Nothing was changed.`,
+    steps: [],
+    iterations: 0,
+    model: 'direct',
+    durationMs: 0,
+  };
 }
 
 /**
@@ -111,7 +128,8 @@ const ACTION_WRITE_TOOLS = new Set([
  */
 export function unresolvedActionGoal(history: ActionHistoryTurn[], message: string): string | null {
   if (isActionRequest(message)) return message;
-  if (interpretRequest(message, history).goal === 'mail_summary') return null;
+  const explicitCurrentIntent = interpretRequest(message);
+  if (explicitCurrentIntent.goal === 'mail_summary' || explicitCurrentIntent.goal === 'calendar_summary') return null;
 
   const text = message.trim();
   if (!text || text.length > 240) return null;
@@ -132,6 +150,12 @@ export function unresolvedActionGoal(history: ActionHistoryTurn[], message: stri
   for (let index = recent.length - 1; index >= 0; index--) {
     const turn = recent[index]!;
     if (turn.role !== 'user' || !isActionRequest(turn.content)) continue;
+
+    const originalIntent = interpretRequest(turn.content);
+    if (explicitCurrentIntent.domains.length > 0 &&
+        !explicitCurrentIntent.domains.some((domain) => originalIntent.domains.includes(domain))) {
+      return null;
+    }
 
     const later = recent.slice(index + 1);
     const alreadyPreparedOrRun = later.some((candidate) => candidate.steps?.some(

@@ -46,11 +46,32 @@ async function main(): Promise<void> {
   const args = JSON.parse(second.toolCalls[0].arguments) as { eventRef?: string };
   if (args.eventRef !== 'event_1') throw new Error('The model did not preserve the verified opaque event reference.');
 
+  const summary = await provider.chat({
+    messages: [
+      {
+        role: 'system',
+        content:
+          'You are testing calendar read routing. Use calendar_upcoming for a general calendar summary or upcoming-events question with no stated range. Never answer calendar facts without a tool.',
+      },
+      {
+        role: 'user',
+        content: 'Can you give me a summary on my calendar as well? Do I have upcoming events?',
+      },
+    ],
+    tools: toolDefinitions(['calendar_upcoming', 'calendar_list', 'calendar_search']),
+    maxTokens: 200,
+    reasoningEffort: provider.reasoningEffort,
+  });
+  if (summary.toolCalls.length !== 1 || summary.toolCalls[0]?.name !== 'calendar_upcoming') {
+    throw new Error(`Expected calendar_upcoming for the reported regression, received ${summary.toolCalls.map((call) => call.name).join(', ') || 'no tool'}.`);
+  }
+
   console.log(JSON.stringify({
     ok: true,
     model: second.model,
     firstTool: first.toolCalls[0].name,
     secondTool: second.toolCalls[0].name,
+    summaryTool: summary.toolCalls[0].name,
     preservedReference: true,
   }));
 }

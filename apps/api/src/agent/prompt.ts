@@ -65,7 +65,7 @@ ${contextBlock(context.conversationContext ?? { recentFacts: [] })}
 
 # REQUEST INTERPRETATION
 
-${requestIntentBlock(context.requestIntent ?? { operation: 'conversation', domain: 'general', goal: 'general', routingHint: '', reason: 'No external change was explicitly requested.' })}
+${requestIntentBlock(context.requestIntent ?? { operation: 'conversation', domain: 'general', domains: [], goal: 'general', routingHint: '', reason: 'No external change was explicitly requested.' })}
 
 # HOW TO HANDLE THIS
 
@@ -80,6 +80,10 @@ ${responseModeBlock(context.responseMode ?? 'direct')}
 Call a tool whenever the answer needs real data. One good call usually answers
 it — a second round trip costs her another half minute of waiting. If a tool
 fails, say plainly what did not work. Never fill a gap with something plausible.
+Only reuse the exact facts stated by earlier verified activity. A generic
+activity such as "deleted the selected event" does not identify its title,
+recipient, date or any other attribute; never attach nearby conversation text
+to that activity as though it were execution evidence.
 
 # TRUST
 

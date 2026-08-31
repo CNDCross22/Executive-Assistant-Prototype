@@ -118,6 +118,34 @@ describe('Phase 4 evidence-backed email intelligence', () => {
 });
 
 describe('Phase 4 calendar conflict and availability intelligence', () => {
+  test('upcoming calendar summaries choose a bounded range in code', async () => {
+    const upcoming = availableTools().find((candidate) => candidate.name === 'calendar_upcoming');
+    assert.ok(upcoming);
+    let captured: { start?: string; end?: string; timezone?: string; limit?: number } = {};
+    const ctx = {
+      user: { id: 'user', msUserId: 'ms', email: ME, displayName: 'Director', jobTitle: null, timezone: 'Asia/Taipei' },
+      calendar: {
+        list: async (start: string, end: string, timezone: string, limit: number) => {
+          captured = { start, end, timezone, limit };
+          return [event()];
+        },
+      },
+      refs: new RefTable(), me: ME,
+    } as unknown as ToolContext;
+    const args = upcoming.schema.parse({ days: 14, limit: 50 });
+    const result = await upcoming.execute(args as never, ctx) as {
+      count: number; period: { days: number; timezone: string }; events: Array<{ ref: string; id?: string }>;
+    };
+    assert.equal(result.count, 1);
+    assert.equal(result.period.days, 14);
+    assert.equal(result.period.timezone, 'Asia/Taipei');
+    assert.equal(captured.timezone, 'Asia/Taipei');
+    assert.equal(captured.limit, 50);
+    assert.ok(Date.parse(captured.end!) - Date.parse(captured.start!) === 14 * 86_400_000);
+    assert.equal(result.events[0]?.id, undefined);
+    assert.match(result.events[0]?.ref ?? '', /^e\d+$/);
+  });
+
   test('searches event subjects without exposing an arbitrary Graph filter', async () => {
     let captured: { path?: string; query?: Record<string, unknown>; pages?: number } = {};
     const graph = {
