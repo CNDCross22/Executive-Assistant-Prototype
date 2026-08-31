@@ -31,7 +31,14 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
       },
     });
   } catch {
-    throw new ApiError(0, 'offline', 'I could not reach the assistant server.', 'Is the API running on port 4000?');
+    throw new ApiError(
+      0,
+      'offline',
+      'I could not reach the assistant server.',
+      import.meta.env.DEV
+        ? 'Is the API running on port 4000?'
+        : 'Check your connection and try again. Nothing was changed.',
+    );
   }
 
   if (res.status === 204) return undefined as T;

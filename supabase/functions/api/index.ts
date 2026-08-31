@@ -115,5 +115,9 @@ Deno.serve(async (request) => {
     }
   }
 
-  return new Response(result.rawPayload, { status: result.statusCode, headers });
+  // The Fetch standard forbids a body for these statuses. Fastify inject()
+  // still exposes an empty Buffer for a CORS 204, and passing that Buffer to
+  // Deno's Response constructor throws before the actual browser POST runs.
+  const bodyless = request.method === 'HEAD' || [101, 204, 205, 304].includes(result.statusCode);
+  return new Response(bodyless ? null : result.rawPayload, { status: result.statusCode, headers });
 });
