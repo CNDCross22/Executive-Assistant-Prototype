@@ -40,4 +40,19 @@ export class RefTable {
   realIds(): string[] {
     return [...this.toReal.values()];
   }
+
+  /** Persist opaque handles across the separate preview and approval turns. */
+  snapshot(): Record<string, string> {
+    return Object.fromEntries(this.toReal.entries());
+  }
+
+  /** Restore only well-formed handles. Real ids are never exposed to the model. */
+  restore(snapshot: Record<string, string> | undefined): void {
+    for (const [handle, realId] of Object.entries(snapshot ?? {})) {
+      if (!/^e\d+$/.test(handle) || !realId) continue;
+      this.toReal.set(handle, realId);
+      this.toRef.set(realId, handle);
+      this.next = Math.max(this.next, Number(handle.slice(1)) + 1);
+    }
+  }
 }

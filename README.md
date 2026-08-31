@@ -19,8 +19,17 @@ anything.
 | Hermes agent — bounded loop, validated tools, prompt-injection boundary | working |
 | Chat interface | working |
 | Honest setup screen when something is not configured | working |
-| Actions (drafts, sending, calendar writes) behind approval | not yet |
-| Persistent memory and learned preferences | not yet |
+| Actions (drafts, sending, calendar, contacts and tasks) behind approval | working |
+| Persistent, approval-controlled memory and observed proposals | working |
+| Bounded long-conversation context and scoped, expiring memory | working |
+| Evidence-backed email analysis, thread state, calendar conflicts and free/busy recommendations | working, live-tenant verification required |
+| Purpose-based model policy and privacy-safe workflow telemetry | working, legacy defaults active |
+| Controlled proactive in-app notices and recommendations | working, read-only |
+| Attachment metadata and bounded safe-text inspection | working; PDF and Office extraction deferred |
+| Teams channel reading | working, read-only; tenant consent required |
+| OneDrive and SharePoint file discovery and safe-text reading | working, read-only; tenant consent required |
+| Unattended read-only polling | implemented, off by default |
+| Autonomous/background Microsoft 365 action | deliberately not implemented |
 
 Anything not built is absent, not stubbed. The app will tell you what it cannot do rather
 than pretend.
@@ -29,7 +38,7 @@ than pretend.
 
 ## Getting it running
 
-Needs Node 22+. Nothing else installs locally except the AI model.
+Needs Node 22+ and an OpenAI API account with credits.
 
 ```bash
 npm install
@@ -49,19 +58,24 @@ At [entra.microsoft.com](https://entra.microsoft.com) → **App registrations** 
 
 Then **Certificates & secrets** → **New client secret** (copy the *Value*, not the Secret ID).
 
-Then **API permissions** → **Microsoft Graph** → **Delegated**, add:
+Then **API permissions** → **Microsoft Graph** → **Delegated permissions**, add the exact active set:
 
 ```
-User.Read   MailboxSettings.Read   Mail.Read
-Calendars.Read   Contacts.Read   People.Read   offline_access
+User.Read   User.ReadBasic.All   MailboxSettings.ReadWrite
+Mail.ReadWrite   Mail.Send   Calendars.ReadWrite
+Contacts.ReadWrite   People.Read   Tasks.ReadWrite
+Team.ReadBasic.All   Channel.ReadBasic.All   ChannelMessage.Read.All
+Files.Read   Sites.Read.All   offline_access
 ```
 
-Then **Grant admin consent**.
+Do not add any **Application** permissions. Then select **Grant admin consent** for the tenant.
+`ChannelMessage.Read.All` specifically requires administrator consent; tenant policy may require
+approval for additional delegated permissions.
 
 Copy the Client ID and Tenant ID from the Overview page into `.env`.
 
-> Read-only to begin with. `Mail.Send` and `Calendars.ReadWrite` are added at the stage that
-> needs them, not before — see `apps/api/src/config/graphScopes.ts`.
+After a scope change, sign out and reconnect Hermes so the encrypted token cache contains a token
+with the new grants. See `apps/api/src/config/graphScopes.ts` and `docs/MICROSOFT_GRAPH.md`.
 
 ### 2. Who may sign in
 
@@ -83,22 +97,24 @@ npm run db:migrate
 
 Leaving `DATABASE_URL` blank works for a first login test, but everything is lost on restart.
 
-### 4. The AI model
+### 4. OpenAI API
 
-```powershell
-winget install Ollama.Ollama
-ollama pull hermes3:8b
-```
-
-Runs in the background on port 11434. Nothing else to configure.
-
-To move to a hosted model later, change three lines in `.env` — no code changes:
+Add credits to your OpenAI API account and create a key at
+[platform.openai.com/api-keys](https://platform.openai.com/api-keys).
 
 ```dotenv
-AI_BASE_URL=https://openrouter.ai/api/v1
-AI_MODEL=nousresearch/hermes-4-70b
-AI_API_KEY=sk-or-...
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-5-mini
+OPENAI_MONTHLY_BUDGET_USD=5
 ```
+
+Role-specific model and budget settings are documented in `docs/AI_AGENT.md`. Blank role models inherit `OPENAI_MODEL`; background model spending is disabled by default.
+
+The production release gate, rollback procedure and incident-response checklist are in
+`docs/PRODUCTION_READINESS.md`. Production refuses an empty allowlist, volatile authentication
+storage, missing or reused application secrets, and an unlimited model budget.
+
+Controlled proactive settings are documented in `docs/PROACTIVE.md`. Dashboard scans are read-only. Unattended polling remains off unless `HERMES_PROACTIVE_BACKGROUND=true` is explicitly configured.
 
 ### 5. Go
 
@@ -116,7 +132,7 @@ API on `:4000`, web on `:5173`.
 Browser  ──session cookie──▶  API  ──▶  Hermes agent  ──▶  validated tools  ──▶  Graph  ──▶  M365
                                               │
                                               ├─ deterministic triage (no AI)
-                                              └─ AI provider (local or hosted)
+                                              └─ OpenAI API
 ```
 
 Graph access tokens never reach the browser. The model never constructs a Graph request —
@@ -142,7 +158,9 @@ apps/api/src/
   graph/       typed Graph client and services
   mail/        deterministic triage and follow-ups
   agent/       orchestrator, prompt, tool registry
-  ai/          provider abstraction
+  ai/          OpenAI integration and spend guard
+  observability/ request/workflow correlation and allowlisted telemetry
+  proactive/   deterministic triggers, policy evaluation, dedupe and scheduler
   routes/      HTTP surface
 apps/web/src/  React chat interface
 supabase/migrations/
@@ -156,6 +174,15 @@ npm run dev           # both
 npm run dev:api
 npm run dev:web
 npm run typecheck
+npm test
+npm run eval:behaviour
 npm run db:migrate
 npm run gen:secrets
+npm run release:audit # privacy-safe production preflight
+npm run uat:live      # read-only live content checks
+npm run build:edge    # package the existing API for Supabase Edge
+npm run deploy:edge   # package and deploy to the linked Hermes project
 ```
+
+GitHub Pages and Supabase deployment details are in
+[`docs/DEPLOYMENT_GITHUB_PAGES.md`](docs/DEPLOYMENT_GITHUB_PAGES.md).

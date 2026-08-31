@@ -10,7 +10,9 @@ let client: postgres.Sql | null = null;
 
 if (env.DATABASE_URL) {
   client = postgres(env.DATABASE_URL, {
-    max: 5,
+    // Each Edge isolate owns its own pool. One connection per isolate avoids
+    // multiplying connections against Supabase's transaction pooler.
+    max: env.HERMES_EDGE_RUNTIME ? 1 : 5,
     idle_timeout: 20,
     connect_timeout: 10,
     prepare: false, // Supabase transaction pooler does not support prepared statements

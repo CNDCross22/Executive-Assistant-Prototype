@@ -1,9 +1,9 @@
 /**
  * Last line of defence on what reaches the Director.
  *
- * The persona asks the model not to leak internals, use markdown, or pad the
- * answer. A small model complies inconsistently, so compliance is enforced
- * here rather than hoped for.
+ * The persona asks the model not to leak internals or pad the answer. A small
+ * model complies inconsistently, so compliance is enforced here rather than
+ * hoped for. Safe structural markers are retained for the UI renderer.
  *
  * This only removes machinery and padding. It never changes a fact, and it
  * never adds anything.
@@ -35,6 +35,8 @@ const PREAMBLES: RegExp[] = [
   /^i (have )?(searched|checked|looked through|retrieved)[^,.]{0,50},\s*/i,
   /^here (is|are) (the|a|what)[^:.]{0,40}:\s*/i,
   /^(sure|certainly|of course|absolutely)[!,.]\s*/i,
+  /^great question[!,.]\s*/i,
+  /^i(?:'d| would) be happy to (?:help|assist)(?: with that)?[!,.]\s*/i,
 ];
 
 /** Closing filler that adds nothing. */
@@ -42,7 +44,9 @@ const TRAILING_FILLER: RegExp[] = [
   /\s*(please )?(let me know if (you need|there is) anything( else)?|i hope (this|that) helps)[^.]*\.?\s*$/i,
   /\s*(make sure to|be sure to|you (should|may want to|might want to)) (review|check|consider)[^.]*\.\s*$/i,
   /\s*(feel free to|do not hesitate to)[^.]*\.\s*$/i,
+  /\s*please don['’]t hesitate[^.?!]*[.?!]?\s*$/i,
   /\s*(this (update |message )?(might|may) be relevant[^.]*\.)\s*$/i,
+  /\s*if you (want|would like),? i can (draft|write|send|reply|forward|schedule|book)[^.?!]*[.?!](\s*(which|would)[^?]*\?)?\s*$/i,
 ];
 
 /**
@@ -85,14 +89,18 @@ export function sanitiseReply(raw: string, options: SanitiseOptions = {}): strin
   text = text.replace(/[^.!?]*\byou can (find|read|view|get)[^.!?]*\b(function|tool|id)\b[^.!?]*[.!?]\s*/gi, '');
   text = text.replace(/[^.!?]*\busing the\s+function\b[^.!?]*[.!?]\s*/gi, '');
 
-  // 5. Markdown has no place in spoken-style prose.
+  // 5. Remove inline decoration while preserving headings and numbered/list
+  //    structure. The web client renders these markers as accessible layout,
+  //    so the Director never sees raw formatting syntax.
   text = text
-    .replace(/^#{1,6}\s+/gm, '')
     .replace(/\*\*(.+?)\*\*/g, '$1')
     .replace(/__(.+?)__/g, '$1')
-    .replace(/^\s*[-*+]\s+/gm, '')
-    .replace(/^\s*\d+\.\s+/gm, '')
+    .replace(/^\s*[-*+]\s+/gm, '• ')
     .replace(/`([^`]+)`/g, '$1');
+
+  // Ordinary Hermes replies do not use em/en dashes. A comma preserves the
+  // pause without changing names, dates, amounts or other factual content.
+  text = text.replace(/\s*[—–]\s*/g, ', ');
 
   // 6. Preambles and trailing filler.
   for (const pattern of PREAMBLES) text = text.replace(pattern, '');

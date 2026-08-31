@@ -1,11 +1,20 @@
-import { useState } from 'react';
+import { useEffect, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
-import { api, loginUrl, type MeResponse, type ConversationSummary, type SetupResponse } from '../lib/api';
+import { api, loginUrl, type MeResponse, type ConversationSummary } from '../lib/api';
 import Sidebar, { type View } from '../components/Sidebar';
 import { useEscape, useAction } from '../lib/hooks';
 import Dashboard from './Dashboard';
+import Briefing from './Briefing';
 import Assistant from './Assistant';
 import Memory from './Memory';
+import Icon, { type IconName } from '../components/Icon';
+
+const VIEWS: View[] = ['dashboard', 'briefing', 'assistant', 'memory'];
+
+function viewFromHash(): View {
+  const value = window.location.hash.replace(/^#\/?/, '') as View;
+  return VIEWS.includes(value) ? value : 'dashboard';
+}
 
 /**
  * The shell. Owns the sidebar, which view is showing, and which conversation
@@ -22,7 +31,7 @@ export default function Workspace({
   demo: boolean;
 }) {
   const queryClient = useQueryClient();
-  const [view, setView] = useState<View>('dashboard');
+  const [view, setView] = useState<View>(viewFromHash);
   const [activeId, setActiveId] = useState<string | null>(null);
   const [pendingQuestion, setPendingQuestion] = useState<string | null>(null);
   const [sidebarOpen, setSidebarOpen] = useState(false);
@@ -30,15 +39,20 @@ export default function Workspace({
 
   useEscape(sidebarOpen, () => setSidebarOpen(false));
 
+  useEffect(() => {
+    const syncView = () => setView(viewFromHash());
+    window.addEventListener('hashchange', syncView);
+    return () => window.removeEventListener('hashchange', syncView);
+  }, []);
+
+  function changeView(next: View) {
+    setView(next);
+    window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/${next}`);
+  }
+
   const { data: conversationData } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => api.get<{ conversations: ConversationSummary[] }>('/api/conversations'),
-  });
-
-  const { data: setup } = useQuery({
-    queryKey: ['setup'],
-    queryFn: () => api.get<SetupResponse>('/api/setup'),
-    refetchInterval: 60_000,
   });
 
   const conversations = conversationData?.conversations ?? [];
@@ -52,14 +66,14 @@ export default function Workspace({
 
   function openConversation(id: string) {
     setActiveId(id);
-    setView('assistant');
+    changeView('assistant');
     setSidebarOpen(false);
   }
 
   function startNew() {
     setActiveId(null);
     setPendingQuestion(null);
-    setView('assistant');
+    changeView('assistant');
     setSidebarOpen(false);
   }
 
@@ -67,7 +81,7 @@ export default function Workspace({
   function askFromDashboard(question?: string) {
     setActiveId(null);
     setPendingQuestion(question ?? null);
-    setView('assistant');
+    changeView('assistant');
   }
 
   /*
@@ -85,14 +99,13 @@ export default function Workspace({
   const sidebarProps = {
     view,
     onViewChange: (v: View) => {
-      setView(v);
+      changeView(v);
       setSidebarOpen(false);
     },
     conversations,
     activeId,
     user,
     demo,
-    spend: setup?.spend,
     onSelect: openConversation,
     onNew: startNew,
     onDelete: removeConversation,
@@ -101,7 +114,7 @@ export default function Workspace({
 
   return (
     <div className="flex h-full overflow-x-hidden">
-      <div className="hidden w-[320px] shrink-0 lg:block">
+      <div className="hidden w-[272px] shrink-0 lg:block">
         <Sidebar {...sidebarProps} />
       </div>
 
@@ -172,23 +185,24 @@ export default function Workspace({
           style={{ borderBottom: '1px solid var(--line)', background: 'var(--surface)' }}
         >
           <button
-            className="label lg:hidden"
-            style={{ background: 'none', border: 'none' }}
+            className="icon-button lg:hidden"
             onClick={() => setSidebarOpen(true)}
+            aria-label="Open navigation and conversations"
           >
-            ☰ Menu
+            <Icon name="menu" />
           </button>
 
-          <span className="label hidden truncate md:inline">
+          <span className="label min-w-0 flex-1 truncate">
             {view === 'dashboard'
               ? 'Dashboard'
+              : view === 'briefing'
+                ? 'Briefing'
               : view === 'memory'
                 ? 'What I remember'
                 : (conversations.find((c) => c.id === activeId)?.title ?? 'New conversation')}
           </span>
 
-          <div className="flex min-w-0 items-center gap-4">
-            {setup?.ai && <span className="label hidden sm:inline">{setup.ai.model}</span>}
+          <div className="flex shrink-0 items-center gap-4">
             <span className="label flex items-center gap-2">
               <span
                 aria-hidden
@@ -217,6 +231,10 @@ export default function Workspace({
           <div key="dashboard" className="view-enter flex min-h-0 flex-1 flex-col">
             <Dashboard user={user} onAsk={askFromDashboard} />
           </div>
+        ) : view === 'briefing' ? (
+          <div key="briefing" className="view-enter flex min-h-0 flex-1 flex-col">
+            <Briefing user={user} />
+          </div>
         ) : view === 'memory' ? (
           <div key="memory" className="view-enter flex min-h-0 flex-1 flex-col">
             <Memory />
@@ -236,6 +254,20 @@ export default function Workspace({
           />
           </div>
         )}
+
+        <nav className="mobile-nav lg:hidden" aria-label="Primary navigation">
+          {([
+            ['dashboard', 'Today', 'today'],
+            ['briefing', 'Briefing', 'briefing'],
+            ['assistant', 'Assistant', 'assistant'],
+            ['memory', 'Preferences', 'preferences'],
+          ] as [View, string, IconName][]).map(([target, label, icon]) => (
+            <button key={target} aria-current={view === target ? 'page' : undefined} onClick={() => changeView(target)}>
+              <Icon name={icon} size={19} />
+              <span>{label}</span>
+            </button>
+          ))}
+        </nav>
       </div>
     </div>
   );

@@ -1,5 +1,7 @@
 /** Errors the user is allowed to see, with a stable machine code. */
 export class AppError extends Error {
+  readonly safeToExpose = true;
+
   constructor(
     readonly statusCode: number,
     readonly code: string,
@@ -25,6 +27,9 @@ export const Errors = {
   forbidden: (detail?: string) =>
     new AppError(403, 'forbidden', 'This account is not permitted to use this assistant.', detail),
 
+  invalidOrigin: () =>
+    new AppError(403, 'invalid_origin', 'That request did not come from the Hermes interface.'),
+
   notFound: (what = 'that') => new AppError(404, 'not_found', `I could not find ${what}.`),
 
   needsReauth: () =>
@@ -35,16 +40,16 @@ export const Errors = {
       'Sign in again to reconnect.',
     ),
 
-  graphPermission: (scope: string) =>
+  graphPermission: (_scope: string) =>
     new AppError(
       403,
       'graph_permission',
       'I do not currently have permission to do that.',
-      `Missing scope: ${scope}`,
+      'Reconnect Microsoft 365 to refresh access. Nothing was changed.',
     ),
 
-  graphUnavailable: (detail?: string) =>
-    new AppError(502, 'graph_unavailable', 'I could not reach Microsoft 365 just now.', detail),
+  graphUnavailable: (_internalDetail?: string) =>
+    new AppError(502, 'graph_unavailable', "Microsoft 365 isn't responding right now.", 'Nothing was changed. Try again in a moment.'),
 
   throttled: (retryAfter?: number) =>
     new AppError(
@@ -59,8 +64,8 @@ export const Errors = {
   database: () =>
     new AppError(503, 'database_unavailable', 'I could not reach my own records just now.', 'Try again shortly.'),
 
-  internal: (detail?: string) =>
-    new AppError(500, 'internal', 'Something went wrong on my side.', detail),
+  internal: (_internalDetail?: string) =>
+    new AppError(500, 'internal', 'I could not complete that request.', 'Nothing was changed. Try again in a moment.'),
 } as const;
 
 // ------------------------------------------------------------- mapping -----
@@ -107,6 +112,22 @@ function isPgError(err: unknown): err is { code: string; message: string } {
  */
 export function toAppError(err: unknown): AppError {
   if (err instanceof AppError) return err;
+  // Edge runtimes and request-injection libraries can reconstruct an Error and
+  // lose its prototype. Preserve only explicitly branded Hermes errors; a raw
+  // object with a statusCode is not trusted and still becomes generic.
+  if (
+    typeof err === 'object' &&
+    err !== null &&
+    (err as { safeToExpose?: unknown }).safeToExpose === true &&
+    typeof (err as { statusCode?: unknown }).statusCode === 'number' &&
+    typeof (err as { code?: unknown }).code === 'string' &&
+    typeof (err as { message?: unknown }).message === 'string'
+  ) {
+    const exposed = err as { statusCode: number; code: string; message: string; detail?: string };
+    if (exposed.statusCode >= 400 && exposed.statusCode <= 599 && /^[a-z][a-z0-9_]{1,63}$/.test(exposed.code)) {
+      return new AppError(exposed.statusCode, exposed.code, exposed.message, exposed.detail);
+    }
+  }
 
   if (isZodError(err)) {
     const detail = err.issues

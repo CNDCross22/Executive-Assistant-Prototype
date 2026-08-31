@@ -18,6 +18,8 @@ export type MemoryType =
   | 'procedural';
 
 export type MemoryStatus = 'active' | 'proposed' | 'dismissed' | 'archived';
+export type MemoryScope = 'global' | 'person' | 'project' | 'communication' | 'calendar' | 'email' | 'operational';
+export type MemoryConflictState = 'none' | 'review';
 
 export interface MemoryEntry {
   id: string;
@@ -29,9 +31,18 @@ export interface MemoryEntry {
   importance: number;
   confidence: number;
   source: 'explicit' | 'observed' | 'seeded';
+  sourceRef: string | null;
   status: MemoryStatus;
+  scope: MemoryScope;
+  scopeRef: string | null;
+  conflictState: MemoryConflictState;
+  supersedesId: string | null;
   pinned: boolean;
   useCount: number;
+  lastUsedAt: string | null;
+  lastConfirmedAt: string | null;
+  expiresAt: string | null;
+  isExpired: boolean;
   createdAt: string;
   updatedAt: string;
 }
@@ -48,11 +59,40 @@ export interface RememberArgs {
   source?: MemoryEntry['source'];
   sourceRef?: string | null;
   status?: MemoryStatus;
+  scope?: MemoryScope;
+  scopeRef?: string | null;
+  expiresAt?: string | null;
+  lastConfirmedAt?: string | null;
 }
 
 // --- in-memory fallback so the app still works before the database exists ---
-const memory: MemoryEntry[] = [];
+export class ScopedMemoryFallback {
+  private readonly byUser = new Map<string, MemoryEntry[]>();
+
+  forUser(userId: string): MemoryEntry[] {
+    const current = this.byUser.get(userId);
+    if (current) return current;
+    const created: MemoryEntry[] = [];
+    this.byUser.set(userId, created);
+    return created;
+  }
+
+  clear(): void {
+    this.byUser.clear();
+  }
+}
+
+const memoryFallback = new ScopedMemoryFallback();
 let nextId = 1;
+
+function fallbackFor(userId: string): MemoryEntry[] {
+  return memoryFallback.forUser(userId);
+}
+
+function iso(value: unknown): string | null {
+  if (value === null || value === undefined) return null;
+  return (value as Date)?.toISOString?.() ?? String(value);
+}
 
 function rowToEntry(r: Record<string, unknown>): MemoryEntry {
   return {
@@ -65,12 +105,124 @@ function rowToEntry(r: Record<string, unknown>): MemoryEntry {
     importance: Number(r.importance),
     confidence: Number(r.confidence),
     source: r.source as MemoryEntry['source'],
+    sourceRef: (r.source_ref as string | null) ?? null,
     status: r.status as MemoryStatus,
+    scope: (r.scope as MemoryScope | null) ?? 'global',
+    scopeRef: (r.scope_ref as string | null) ?? null,
+    conflictState: (r.conflict_state as MemoryConflictState | null) ?? 'none',
+    supersedesId: (r.supersedes_id as string | null) ?? null,
     pinned: Boolean(r.pinned),
     useCount: Number(r.use_count ?? 0),
+    lastUsedAt: iso(r.last_used_at),
+    lastConfirmedAt: iso(r.last_confirmed_at),
+    expiresAt: iso(r.expires_at),
+    isExpired: Boolean(r.expires_at && Date.parse(iso(r.expires_at) ?? '') <= Date.now()),
     createdAt: (r.created_at as Date)?.toISOString?.() ?? String(r.created_at),
     updatedAt: (r.updated_at as Date)?.toISOString?.() ?? String(r.updated_at),
   };
+}
+
+export interface MemoryScopeContext {
+  scopes: MemoryScope[];
+  references: string[];
+}
+
+export function inferMemoryScopeContext(message: string): MemoryScopeContext {
+  const text = message.toLowerCase();
+  const scopes = new Set<MemoryScope>(['global', 'operational']);
+  if (/\b(email|mail|reply|forward|subject|recipient|cc|bcc|message|draft)\b/.test(text)) {
+    scopes.add('email');
+    scopes.add('communication');
+  }
+  if (/\b(calendar|meeting|schedule|book|appointment|invite|attendee|time|timezone)\b/.test(text)) scopes.add('calendar');
+  if (/\b(project|programme|program|initiative|delivery|milestone)\b/.test(text)) scopes.add('project');
+  const references = [
+    ...(text.match(/[a-z0-9._%+-]+@[a-z0-9.-]+\.[a-z]{2,}/g) ?? []),
+    ...text.replace(/[^a-z0-9\s-]/g, ' ').split(/\s+/).filter((word) => word.length >= 4),
+  ].slice(0, 30);
+  return { scopes: [...scopes], references };
+}
+
+export function memorySpecificity(entry: Pick<MemoryEntry, 'scope' | 'scopeRef'>): number {
+  if (entry.scope === 'person' || entry.scope === 'project') return entry.scopeRef ? 4 : 3;
+  if (entry.scope === 'email' || entry.scope === 'calendar' || entry.scope === 'communication') return entry.scopeRef ? 3 : 2;
+  if (entry.scope === 'operational') return 1;
+  return 0;
+}
+
+export interface MemoryConflict {
+  firstId: string;
+  secondId: string;
+  reason: 'opposing_rules';
+}
+
+function memoryTerms(value: string): Set<string> {
+  const ignored = new Set(['always', 'never', 'not', 'dont', 'prefer', 'must', 'should', 'avoid', 'director', 'please', 'anything']);
+  return new Set(value.toLowerCase().replace(/don't/g, 'dont').replace(/[^a-z0-9\s]/g, ' ').split(/\s+/).filter((word) => word.length > 2 && !ignored.has(word)));
+}
+
+function polarity(value: string): -1 | 0 | 1 {
+  if (/\b(never|do not|don't|avoid|no )\b/i.test(value)) return -1;
+  if (/\b(always|prefer|must|keep|use|provide)\b/i.test(value)) return 1;
+  return 0;
+}
+
+export function findMemoryConflicts(entries: MemoryEntry[]): MemoryConflict[] {
+  const active = entries.filter((entry) => entry.status === 'active' && !entry.isExpired);
+  const conflicts: MemoryConflict[] = [];
+  for (let left = 0; left < active.length; left++) {
+    for (let right = left + 1; right < active.length; right++) {
+      const first = active[left]!;
+      const second = active[right]!;
+      if (first.scope !== second.scope || first.scopeRef !== second.scopeRef) continue;
+      const firstPolarity = polarity(first.content);
+      const secondPolarity = polarity(second.content);
+      if (!firstPolarity || !secondPolarity || firstPolarity === secondPolarity) continue;
+      const a = memoryTerms(first.content);
+      const b = memoryTerms(second.content);
+      const shared = [...a].filter((word) => b.has(word)).length;
+      const denominator = Math.max(1, Math.min(a.size, b.size));
+      if (shared / denominator >= 0.5) conflicts.push({ firstId: first.id, secondId: second.id, reason: 'opposing_rules' });
+    }
+  }
+  return conflicts;
+}
+
+function scopeApplies(entry: MemoryEntry, context?: MemoryScopeContext): boolean {
+  if (entry.scope === 'global' || entry.scope === 'operational') return true;
+  if (!context?.scopes.includes(entry.scope)) return false;
+  if (!entry.scopeRef) return true;
+  const target = entry.scopeRef.toLowerCase();
+  return context.references.some((reference) => reference === target || target.includes(reference) || reference.includes(target));
+}
+
+/** Specific approved rules win without deleting broader rules. */
+export function selectApplicableMemories(entries: MemoryEntry[], context?: MemoryScopeContext, limit = 12): MemoryEntry[] {
+  const conflicts = findMemoryConflicts(entries);
+  const conflicted = new Set(conflicts.flatMap((conflict) => [conflict.firstId, conflict.secondId]));
+  const usable = entries.filter((entry) => entry.status === 'active' && !entry.isExpired && entry.conflictState !== 'review' && !conflicted.has(entry.id) && scopeApplies(entry, context));
+  const bestByKey = new Map<string, MemoryEntry>();
+  const unkeyed: MemoryEntry[] = [];
+  for (const entry of usable) {
+    if (!entry.key) {
+      unkeyed.push(entry);
+      continue;
+    }
+    const current = bestByKey.get(entry.key);
+    const rank = (candidate: MemoryEntry) => [
+      memorySpecificity(candidate),
+      candidate.source === 'explicit' ? 2 : candidate.source === 'observed' ? 1 : 0,
+      candidate.confidence,
+      candidate.importance,
+      Date.parse(candidate.lastConfirmedAt ?? candidate.updatedAt),
+    ];
+    if (!current || rank(entry).some((value, index) => value > rank(current)[index]! && rank(entry).slice(0, index).every((prior, priorIndex) => prior === rank(current)[priorIndex]))) {
+      bestByKey.set(entry.key, entry);
+    }
+  }
+  return [...bestByKey.values(), ...unkeyed]
+    .sort((a, b) => Number(b.pinned) - Number(a.pinned) || memorySpecificity(b) - memorySpecificity(a) || b.importance - a.importance || b.confidence - a.confidence)
+    .slice(0, limit);
 }
 
 /** Save something. Structured keys replace the previous value rather than duplicating. */
@@ -85,20 +237,40 @@ export async function remember(args: RememberArgs): Promise<MemoryEntry | null> 
     confidence: Math.min(1, Math.max(0, args.confidence ?? 1)),
     source: args.source ?? 'explicit',
     status: args.status ?? 'active',
+    scope: args.scope ?? (args.type === 'person' ? 'person' : args.type === 'operational' ? 'operational' : 'global'),
+    scopeRef: args.scopeRef?.trim().toLowerCase() ?? args.subject?.trim().toLowerCase() ?? null,
+    expiresAt: args.expiresAt ?? null,
+    lastConfirmedAt: args.lastConfirmedAt ?? (args.status === 'proposed' ? null : new Date().toISOString()),
   };
 
   if (!hasDb()) {
+    const memory = fallbackFor(args.userId);
+    const duplicate = memory.find((m) =>
+      m.status === 'active' &&
+      m.scope === entry.scope &&
+      m.scopeRef === entry.scopeRef &&
+      (m.title.toLowerCase() === entry.title.toLowerCase() || m.content.toLowerCase() === entry.content.toLowerCase())
+    );
+    if (duplicate) return duplicate;
     const created: MemoryEntry = {
       id: `mem_${nextId++}`,
       ...entry,
+      sourceRef: args.sourceRef ?? null,
+      conflictState: 'none' as const,
+      supersedesId: null,
       pinned: false,
       useCount: 0,
+      lastUsedAt: null,
+      isExpired: Boolean(entry.expiresAt && Date.parse(entry.expiresAt) <= Date.now()),
       createdAt: new Date().toISOString(),
       updatedAt: new Date().toISOString(),
     };
     if (entry.key) {
-      const idx = memory.findIndex((m) => m.key === entry.key && m.status === 'active');
-      if (idx >= 0) memory.splice(idx, 1);
+      const previous = memory.find((m) => m.key === entry.key && m.scope === entry.scope && m.scopeRef === entry.scopeRef && m.status === 'active');
+      if (previous) {
+        previous.status = 'archived';
+        created.supersedesId = previous.id;
+      }
     }
     memory.push(created);
     return created;
@@ -107,21 +279,45 @@ export async function remember(args: RememberArgs): Promise<MemoryEntry | null> 
   try {
     const db = requireDb();
 
-    // A structured preference has one current value; supersede the old one.
+    const duplicates = await db`
+      select * from memory_entries
+      where user_id = ${args.userId}
+        and status = 'active'
+        and scope = ${entry.scope}
+        and coalesce(scope_ref, '') = coalesce(${entry.scopeRef}, '')
+        and (lower(title) = lower(${entry.title}) or lower(content) = lower(${entry.content}))
+      order by updated_at desc
+      limit 1
+    `;
+    if (duplicates[0]) return rowToEntry(duplicates[0]);
+
+    // Supersede only the same key at the same specificity. A more specific
+    // legal/person/project rule must coexist with the broader rule.
+    let supersedesId: string | null = null;
     if (entry.key && entry.status === 'active') {
+      const previous = await db<{ id: string }[]>`
+        select id from memory_entries
+        where user_id = ${args.userId} and key = ${entry.key} and scope = ${entry.scope}
+          and coalesce(scope_ref, '') = coalesce(${entry.scopeRef}, '') and status = 'active'
+        order by updated_at desc limit 1
+      `;
+      supersedesId = previous[0]?.id ?? null;
       await db`
         update memory_entries set status = 'archived'
-        where user_id = ${args.userId} and key = ${entry.key} and status = 'active'
+        where user_id = ${args.userId} and key = ${entry.key} and scope = ${entry.scope}
+          and coalesce(scope_ref, '') = coalesce(${entry.scopeRef}, '') and status = 'active'
       `;
     }
 
     const rows = await db`
       insert into memory_entries
-        (user_id, type, title, content, key, subject, importance, confidence, source, source_ref, status)
+        (user_id, type, title, content, key, subject, importance, confidence, source, source_ref, status,
+         scope, scope_ref, expires_at, last_confirmed_at, supersedes_id)
       values (
         ${args.userId}, ${entry.type}, ${entry.title}, ${entry.content}, ${entry.key},
         ${entry.subject}, ${entry.importance}, ${entry.confidence}, ${entry.source},
-        ${args.sourceRef ?? null}, ${entry.status}
+        ${args.sourceRef ?? null}, ${entry.status}, ${entry.scope}, ${entry.scopeRef}, ${entry.expiresAt},
+        ${entry.lastConfirmedAt}, ${supersedesId}
       )
       returning *
     `;
@@ -142,6 +338,7 @@ export interface RecallOptions {
   query?: string;
   limit?: number;
   includeProposed?: boolean;
+  scopeContext?: MemoryScopeContext;
 }
 
 /**
@@ -154,14 +351,19 @@ export interface RecallOptions {
 export async function recall(userId: string, options: RecallOptions = {}): Promise<MemoryEntry[]> {
   const { types, subject, query, limit = 12, includeProposed = false } = options;
   const statuses = includeProposed ? ['active', 'proposed'] : ['active'];
+  const scopeContext = options.scopeContext ?? (subject
+    ? { scopes: ['global', 'operational', 'person'] as MemoryScope[], references: [subject.toLowerCase()] }
+    : inferMemoryScopeContext(query ?? ''));
 
   if (!hasDb()) {
-    return memory
+    const candidates = fallbackFor(userId)
       .filter((m) => statuses.includes(m.status))
       .filter((m) => !types || types.includes(m.type))
       .filter((m) => !subject || m.subject === subject.toLowerCase())
-      .sort((a, b) => Number(b.pinned) - Number(a.pinned) || b.importance - a.importance)
-      .slice(0, limit);
+      .map((m) => ({ ...m, isExpired: Boolean(m.expiresAt && Date.parse(m.expiresAt) <= Date.now()) }));
+    return includeProposed
+      ? candidates.filter((entry) => scopeApplies(entry, scopeContext)).slice(0, limit)
+      : selectApplicableMemories(candidates, scopeContext, limit);
   }
 
   try {
@@ -174,7 +376,7 @@ export async function recall(userId: string, options: RecallOptions = {}): Promi
       .slice(0, 8);
 
     const tsQuery = terms.length ? terms.join(' | ') : null;
-
+    const scopes = scopeContext.scopes;
     const rows = await db`
       select *,
         (importance * 2)
@@ -189,12 +391,17 @@ export async function recall(userId: string, options: RecallOptions = {}): Promi
       where user_id = ${userId}
         and status = any(${statuses})
         and (expires_at is null or expires_at > now())
+        and (
+          scope in ('global', 'operational')
+          or scope = any(${scopes})
+        )
         ${types && types.length ? db`and type = any(${types})` : db``}
       order by score desc, importance desc, updated_at desc
-      limit ${limit}
+      limit 100
     `;
 
-    return rows.map(rowToEntry);
+    const entries = rows.map(rowToEntry);
+    return includeProposed ? entries.slice(0, limit) : selectApplicableMemories(entries, scopeContext, limit);
   } catch (err) {
     logger.error({ err }, 'Could not recall memory');
     return [];
@@ -216,7 +423,10 @@ export async function markUsed(ids: string[]): Promise<void> {
 }
 
 export async function listMemory(userId: string, status?: MemoryStatus): Promise<MemoryEntry[]> {
-  if (!hasDb()) return memory.filter((m) => !status || m.status === status);
+  if (!hasDb()) return fallbackFor(userId).filter((m) => !status || m.status === status).map((m) => ({
+    ...m,
+    isExpired: Boolean(m.expiresAt && Date.parse(m.expiresAt) <= Date.now()),
+  }));
 
   const db = requireDb();
   const rows = status
@@ -225,14 +435,46 @@ export async function listMemory(userId: string, status?: MemoryStatus): Promise
   return rows.map(rowToEntry);
 }
 
+/** Fetch one exact memory owned by this Director. */
+export async function getMemory(userId: string, id: string): Promise<MemoryEntry | null> {
+  if (!hasDb()) return fallbackFor(userId).find((entry) => entry.id === id) ?? null;
+
+  try {
+    const db = requireDb();
+    const rows = await db`
+      select * from memory_entries
+      where id = ${id} and user_id = ${userId} and status != 'archived'
+      limit 1
+    `;
+    return rows[0] ? rowToEntry(rows[0]) : null;
+  } catch (err) {
+    logger.error({ err }, 'Could not read memory');
+    return null;
+  }
+}
+
 export async function updateMemory(
   userId: string,
   id: string,
-  patch: { title?: string; content?: string; importance?: number; pinned?: boolean; status?: MemoryStatus },
+  patch: {
+    title?: string;
+    content?: string;
+    importance?: number;
+    pinned?: boolean;
+    status?: MemoryStatus;
+    scope?: MemoryScope;
+    scopeRef?: string | null;
+    expiresAt?: string | null;
+    conflictState?: MemoryConflictState;
+  },
 ): Promise<void> {
   if (!hasDb()) {
-    const entry = memory.find((m) => m.id === id);
-    if (entry) Object.assign(entry, patch, { updatedAt: new Date().toISOString() });
+    const entry = fallbackFor(userId).find((m) => m.id === id);
+    if (entry) Object.assign(entry, patch, {
+      ...(patch.status === 'active' ? { lastConfirmedAt: new Date().toISOString() } : {}),
+      isExpired: Boolean((patch.expiresAt ?? entry.expiresAt) && Date.parse(patch.expiresAt ?? entry.expiresAt ?? '') <= Date.now()),
+      updatedAt: new Date().toISOString(),
+    });
     return;
   }
 
@@ -243,13 +485,66 @@ export async function updateMemory(
       content    = coalesce(${patch.content ?? null}, content),
       importance = coalesce(${patch.importance ?? null}, importance),
       pinned     = coalesce(${patch.pinned ?? null}, pinned),
-      status     = coalesce(${patch.status ?? null}, status)
+      status     = coalesce(${patch.status ?? null}, status),
+      scope      = coalesce(${patch.scope ?? null}, scope),
+      scope_ref  = case when ${patch.scopeRef === undefined} then scope_ref else ${patch.scopeRef ?? null} end,
+      expires_at = case when ${patch.expiresAt === undefined} then expires_at else ${patch.expiresAt ?? null}::timestamptz end,
+      conflict_state = coalesce(${patch.conflictState ?? null}, conflict_state),
+      last_confirmed_at = case when ${patch.status ?? null} = 'active' then now() else last_confirmed_at end
     where id = ${id} and user_id = ${userId}
   `;
 }
 
+/** Activate an approved proposal while preserving a supersession trail. */
+export async function approveMemory(userId: string, id: string): Promise<boolean> {
+  if (!hasDb()) {
+    const memory = fallbackFor(userId);
+    const entry = memory.find((candidate) => candidate.id === id && candidate.status === 'proposed');
+    if (!entry) return false;
+    if (entry.key) {
+      const previous = memory.find((candidate) =>
+        candidate.id !== id && candidate.status === 'active' && candidate.key === entry.key &&
+        candidate.scope === entry.scope && candidate.scopeRef === entry.scopeRef,
+      );
+      if (previous) {
+        previous.status = 'archived';
+        entry.supersedesId = previous.id;
+      }
+    }
+    entry.status = 'active';
+    entry.lastConfirmedAt = new Date().toISOString();
+    entry.updatedAt = new Date().toISOString();
+    return true;
+  }
+
+  const db = requireDb();
+  const rows = await db<{ id: string; key: string | null; scope: MemoryScope; scope_ref: string | null }[]>`
+    select id, key, scope, scope_ref from memory_entries
+    where id = ${id} and user_id = ${userId} and status = 'proposed'
+    limit 1
+  `;
+  const entry = rows[0];
+  if (!entry) return false;
+  let supersedesId: string | null = null;
+  if (entry.key) {
+    const previous = await db<{ id: string }[]>`
+      update memory_entries set status = 'archived'
+      where user_id = ${userId} and id != ${id} and key = ${entry.key} and scope = ${entry.scope}
+        and coalesce(scope_ref, '') = coalesce(${entry.scope_ref}, '') and status = 'active'
+      returning id
+    `;
+    supersedesId = previous[0]?.id ?? null;
+  }
+  await db`
+    update memory_entries set status = 'active', last_confirmed_at = now(), supersedes_id = ${supersedesId}
+    where id = ${id} and user_id = ${userId} and status = 'proposed'
+  `;
+  return true;
+}
+
 export async function forget(userId: string, id: string): Promise<void> {
   if (!hasDb()) {
+    const memory = fallbackFor(userId);
     const idx = memory.findIndex((m) => m.id === id);
     if (idx >= 0) memory.splice(idx, 1);
     return;

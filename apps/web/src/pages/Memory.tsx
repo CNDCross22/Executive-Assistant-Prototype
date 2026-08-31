@@ -1,4 +1,4 @@
-import { useState } from 'react';
+import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import Card from '../components/Card';
@@ -14,6 +14,15 @@ interface MemoryEntry {
   status: 'active' | 'proposed' | 'dismissed' | 'archived';
   pinned: boolean;
   createdAt: string;
+  updatedAt: string;
+  confidence: number;
+  sourceRef: string | null;
+  scope: 'global' | 'person' | 'project' | 'communication' | 'calendar' | 'email' | 'operational';
+  scopeRef: string | null;
+  lastUsedAt: string | null;
+  lastConfirmedAt: string | null;
+  expiresAt: string | null;
+  isExpired: boolean;
 }
 
 interface MemoryResponse {
@@ -22,6 +31,7 @@ interface MemoryResponse {
   dismissed: MemoryEntry[];
   watching: { signalKey: string; title: string; observedCount: number; needed: number }[];
   proposalThreshold: number;
+  conflicts: { firstId: string; secondId: string; reason: string }[];
 }
 
 const TYPE_LABEL: Record<string, string> = {
@@ -32,6 +42,7 @@ const TYPE_LABEL: Record<string, string> = {
   procedural: 'Procedure',
   historical: 'History',
 };
+const EMPTY_MEMORY: MemoryEntry[] = [];
 
 /**
  * Everything the assistant believes about her, and the controls to change it.
@@ -45,6 +56,9 @@ export default function Memory() {
   const [editing, setEditing] = useState<string | null>(null);
   const [draft, setDraft] = useState('');
   const [forgetting, setForgetting] = useState<string | null>(null);
+  const [search, setSearch] = useState('');
+  const [typeFilter, setTypeFilter] = useState('all');
+  const [sort, setSort] = useState<'newest' | 'oldest' | 'importance' | 'title'>('importance');
   const { run, pending, error, dismissError } = useAction();
 
   const { data, isLoading } = useQuery({
@@ -57,6 +71,27 @@ export default function Memory() {
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
   };
 
+  // These hooks must run during loading as well as after data arrives.
+  const remembered = data?.remembered ?? EMPTY_MEMORY;
+  const proposed = data?.proposed ?? EMPTY_MEMORY;
+  const watching = data?.watching ?? [];
+  const conflictedIds = new Set((data?.conflicts ?? []).flatMap((conflict) => [conflict.firstId, conflict.secondId]));
+  const types = [...new Set(remembered.map((entry) => entry.type))];
+  const visibleRemembered = useMemo(() => {
+    const query = search.trim().toLowerCase();
+    return remembered
+      .filter((entry) => {
+        if (typeFilter !== 'all' && entry.type !== typeFilter) return false;
+        return !query || `${entry.title} ${entry.content}`.toLowerCase().includes(query);
+      })
+      .sort((a, b) => {
+        if (sort === 'newest') return Date.parse(b.createdAt) - Date.parse(a.createdAt);
+        if (sort === 'oldest') return Date.parse(a.createdAt) - Date.parse(b.createdAt);
+        if (sort === 'title') return (a.title || a.content).localeCompare(b.title || b.content);
+        return b.importance - a.importance || Number(b.pinned) - Number(a.pinned);
+      });
+  }, [remembered, search, sort, typeFilter]);
+
   if (isLoading) {
     return (
       <div className="flex h-full items-center justify-center">
@@ -65,18 +100,15 @@ export default function Memory() {
     );
   }
 
-  const remembered = data?.remembered ?? [];
-  const proposed = data?.proposed ?? [];
-  const watching = data?.watching ?? [];
-
   return (
     <div className="scroll h-full overflow-x-hidden">
       <div className="mx-auto w-full max-w-[62rem] px-4 py-6 sm:px-6">
         <header className="mb-5">
-          <h1 className="h-display mb-2 text-[1.6rem] sm:text-[1.9rem]">What I remember</h1>
+          <p className="label mb-1">Assistant settings</p>
+          <h1 className="h-display mb-2 text-[1.6rem] sm:text-[1.9rem]">Preferences and rules</h1>
           <p className="max-w-xl" style={{ color: 'var(--ink-soft)' }}>
-            Everything here shapes how I answer. Nothing is saved unless you told me or agreed to
-            it, and you can change or delete any of it.
+            Review what shapes the assistant's answers. Nothing is saved unless you said it or
+            approved it, and every item remains under your control.
           </p>
         </header>
 
@@ -98,6 +130,20 @@ export default function Memory() {
             </button>
           </div>
         )}
+
+        <div className="mb-4 grid gap-2 sm:grid-cols-[minmax(14rem,1fr)_auto_auto]">
+          <input className="control" type="search" value={search} onChange={(event) => setSearch(event.target.value)} placeholder="Search preferences and rules…" aria-label="Search preferences and rules" />
+          <select className="control" value={typeFilter} onChange={(event) => setTypeFilter(event.target.value)} aria-label="Filter by type">
+            <option value="all">All types</option>
+            {types.map((type) => <option key={type} value={type}>{TYPE_LABEL[type] ?? type}</option>)}
+          </select>
+          <select className="control" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort preferences">
+            <option value="importance">Most important</option>
+            <option value="newest">Newest first</option>
+            <option value="oldest">Oldest first</option>
+            <option value="title">Name A–Z</option>
+          </select>
+        </div>
 
         <div className="flex flex-col gap-4">
           {/* ---- waiting on her ---- */}
@@ -138,14 +184,19 @@ export default function Memory() {
           )}
 
           {/* ---- what it knows ---- */}
-          <Card title="Saved" count={remembered.length}>
+          <Card title="Saved preferences" count={visibleRemembered.length}>
             {remembered.length === 0 ? (
               <p style={{ color: 'var(--muted)' }}>
                 Nothing yet. Tell me something like “never book me before 9” and I will keep it.
               </p>
+            ) : visibleRemembered.length === 0 ? (
+              <div className="py-6 text-center">
+                <p className="h-display">No matching preferences</p>
+                <button className="text-action mt-2" onClick={() => { setSearch(''); setTypeFilter('all'); }}>Clear filters</button>
+              </div>
             ) : (
               <ul className="flex flex-col gap-px" style={{ background: 'var(--line-soft)' }}>
-                {remembered.map((e) => (
+                {visibleRemembered.map((e) => (
                   <li key={e.id} className="px-1 py-3" style={{ background: 'var(--surface)' }}>
                     <div className="mb-1 flex flex-wrap items-baseline gap-2">
                       <span className="label rounded px-1.5 py-0.5" style={{ background: 'var(--sunk)' }}>
@@ -157,6 +208,8 @@ export default function Memory() {
                         </span>
                       )}
                       {e.pinned && <span className="label">pinned</span>}
+                      {e.isExpired && <span className="label" style={{ color: 'var(--clay)' }}>expired</span>}
+                      {conflictedIds.has(e.id) && <span className="label" style={{ color: 'var(--clay)' }}>conflict, not applied</span>}
                     </div>
 
                     {editing === e.id ? (
@@ -202,6 +255,13 @@ export default function Memory() {
                     ) : (
                       <>
                         <p>{e.content}</p>
+                        <p className="label mt-1.5" style={{ color: 'var(--muted)' }}>
+                          {e.scopeRef ? `${e.scope}: ${e.scopeRef}` : e.scope}
+                          {' · '}{e.source === 'explicit' ? 'you stated this' : e.source === 'observed' ? 'you approved an observed pattern' : 'seeded default'}
+                          {e.lastConfirmedAt ? ` · confirmed ${new Date(e.lastConfirmedAt).toLocaleDateString()}` : ''}
+                          {e.lastUsedAt ? ` · last used ${new Date(e.lastUsedAt).toLocaleDateString()}` : ''}
+                          {e.expiresAt ? ` · expires ${new Date(e.expiresAt).toLocaleString()}` : ''}
+                        </p>
                         {forgetting === e.id ? (
                           /*
                             Forgetting a saved rule is irreversible, and it used

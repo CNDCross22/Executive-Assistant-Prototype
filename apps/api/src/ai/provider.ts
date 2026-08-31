@@ -1,10 +1,7 @@
 /**
- * The one place the application knows about AI vendors.
- *
- * Everything above this file is provider-agnostic, so moving between OpenAI,
- * Azure OpenAI, Anthropic or a locally hosted model is a config change rather
- * than a rewrite.
+ * Internal model boundary used by the OpenAI integration.
  */
+import type { ReasoningEffort } from './policy.js';
 
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
@@ -44,12 +41,15 @@ export interface ChatOptions {
   tools?: ToolDefinition[];
   temperature?: number;
   maxTokens?: number;
+  /** Explicit per-purpose policy. Defaults to the provider configuration. */
+  reasoningEffort?: ReasoningEffort;
   signal?: AbortSignal;
 }
 
 export interface AIProvider {
   readonly id: string;
   readonly model: string;
+  readonly reasoningEffort: ReasoningEffort;
   chat(options: ChatOptions): Promise<ChatResult>;
   /** Cheap liveness check used by the setup screen and diagnostics. */
   health(): Promise<{ ok: boolean; detail: string }>;

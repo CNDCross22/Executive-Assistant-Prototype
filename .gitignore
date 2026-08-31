@@ -8,3 +8,5 @@ build/
 coverage/
 .vite/
 *.tsbuildinfo
+supabase/.temp/
+supabase/functions/api/hermes-api.mjs

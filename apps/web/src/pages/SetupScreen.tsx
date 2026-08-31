@@ -39,7 +39,7 @@ export default function SetupScreen({ onRecheck }: { onRecheck: () => void }) {
               aria-hidden
               className="mt-1 flex h-5 w-5 shrink-0 items-center justify-center rounded-full text-[11px]"
               style={{
-                background: check.ready ? 'var(--sage-bg)' : 'var(--surface-sunk)',
+                background: check.ready ? 'var(--sage-bg)' : 'var(--sunk)',
                 color: check.ready ? 'var(--sage)' : 'var(--muted)',
                 fontFamily: 'var(--font-mono)',
               }}
@@ -78,7 +78,7 @@ export default function SetupScreen({ onRecheck }: { onRecheck: () => void }) {
         </p>
         <pre
           className="overflow-x-auto p-4 text-[0.82rem]"
-          style={{ background: 'var(--surface-sunk)', fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)' }}
+          style={{ background: 'var(--sunk)', fontFamily: 'var(--font-mono)', color: 'var(--ink-soft)' }}
         >
 {`cp .env.example .env
 npm run gen:secrets`}
@@ -87,7 +87,7 @@ npm run gen:secrets`}
 
       {data?.ai && (
         <p className="label mb-8">
-          AI · {data.ai.model} at {data.ai.baseUrl}
+          OpenAI · {data.ai.model}
         </p>
       )}
 

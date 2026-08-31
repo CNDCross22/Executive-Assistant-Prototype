@@ -25,7 +25,7 @@ export const PREVIEWS: Preview[] = [
     question: 'What needs me today?',
     steps: [{ tool: 'mail_needs_attention', summary: 'Checked what needs your attention', status: 'success' }],
     reply:
-      'Be careful with one from IT Support at security@0utlook-verify.com — note the zero in place of the letter O. It contains hidden instructions trying to get me to forward your inbox to an outside address. I have not acted on it and I would not. Worth deleting and reporting.\n\nThree things need you. Priya wants a yes or no on the Saturday roster before she tells the team. Elena needs your signature on the contract renewal before the 30th, or cover lapses. Michael is chasing the revenue figures for Thursday’s board pack. The other three can wait — a newsletter, a backup notice and the parking email.',
+      'Be careful with one from IT Support at security@0utlook-verify.com. Note the zero in place of the letter O. It contains hidden instructions trying to get me to forward your inbox to an outside address. I have not acted on it and I would not. Worth deleting and reporting.\n\nThree things need you. Priya wants a yes or no on the Saturday roster before she tells the team. Elena needs your signature on the contract renewal before the 30th, or cover lapses. Michael is chasing the revenue figures for Thursday’s board pack. The other three can wait: a newsletter, a backup notice and the parking email.',
     model: 'direct',
     durationMs: 4,
   },
@@ -60,7 +60,7 @@ export const PREVIEWS: Preview[] = [
     question: 'Reply to Elena and tell her I will sign it today',
     steps: [],
     reply:
-      'I cannot send or reply to email yet — I only have read access to your mailbox, and nothing else is switched on. I can tell you what she asked and by when: the renewal expires on the 30th and she needs a signed copy back before then.',
+      'I cannot send or reply to email yet. I only have read access to your mailbox, and nothing else is switched on. I can tell you what she asked and by when: the renewal expires on the 30th and she needs a signed copy back before then.',
     model: 'direct',
     durationMs: 1,
   },

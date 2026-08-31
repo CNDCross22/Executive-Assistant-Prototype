@@ -1,0 +1,114 @@
+// Supabase provides these globals in the Edge runtime. Runtime secrets are set
+// in the Supabase project and are never compiled into the Pages application.
+import { Buffer } from 'node:buffer';
+import { Server } from 'node:http';
+
+declare const Deno: {
+  env: { get(name: string): string | undefined };
+  serve(handler: (request: Request) => Promise<Response>): void;
+};
+
+// Fastify's production logger uses Buffer through pino/sonic-boom. Deno offers
+// the Node implementation as a module but does not install it globally.
+(globalThis as typeof globalThis & { Buffer?: typeof Buffer }).Buffer ??= Buffer;
+(globalThis as typeof globalThis & { global?: typeof globalThis }).global ??= globalThis;
+const timerGlobals = globalThis as typeof globalThis & {
+  setImmediate?: (callback: (...args: unknown[]) => void, ...args: unknown[]) => number;
+  clearImmediate?: (handle: number) => void;
+};
+timerGlobals.setImmediate ??= (callback, ...args) => setTimeout(callback, 0, ...args);
+timerGlobals.clearImmediate ??= (handle) => clearTimeout(handle);
+
+// Fastify configures a timeout on its internal Node server even when requests
+// are handled exclusively through inject(). Deno does not implement that
+// listener method; no socket is opened in Edge, so retaining the value is a
+// safe compatibility no-op.
+Server.prototype.setTimeout = function setTimeoutCompat(milliseconds: number) {
+  this.timeout = milliseconds;
+  return this;
+};
+
+const supabaseUrl = Deno.env.get('SUPABASE_URL');
+const forwardedKeys = [
+  'MICROSOFT_CLIENT_ID',
+  'MICROSOFT_CLIENT_SECRET',
+  'MICROSOFT_TENANT_ID',
+  'PRIMARY_USER_EMAIL',
+  'ALLOWED_USERS',
+  'OPENAI_API_KEY',
+  'OPENAI_MODEL',
+  'OPENAI_FAST_MODEL',
+  'OPENAI_EXECUTIVE_MODEL',
+  'OPENAI_BRIEFING_MODEL',
+  'OPENAI_BACKGROUND_MODEL',
+  'OPENAI_REASONING_EFFORT',
+  'OPENAI_FAST_REASONING_EFFORT',
+  'OPENAI_EXECUTIVE_REASONING_EFFORT',
+  'OPENAI_BRIEFING_REASONING_EFFORT',
+  'OPENAI_BACKGROUND_REASONING_EFFORT',
+  'OPENAI_MONTHLY_BUDGET_USD',
+  'OPENAI_INTERACTIVE_BUDGET_USD',
+  'OPENAI_BRIEFING_BUDGET_USD',
+  'OPENAI_BACKGROUND_BUDGET_USD',
+  'HERMES_RESPONSE_MODES',
+  'SESSION_SECRET',
+  'ENCRYPTION_KEY',
+  'LOG_LEVEL',
+] as const;
+const edgeEnvironment: Record<string, string | undefined> = Object.fromEntries(
+  forwardedKeys.map((name) => [name, Deno.env.get(name)]),
+);
+Object.assign(edgeEnvironment, {
+  NODE_ENV: 'production',
+  APP_URL: Deno.env.get('HERMES_APP_URL'),
+  API_URL: supabaseUrl ? `${supabaseUrl}/functions/v1/api` : undefined,
+  DATABASE_URL: Deno.env.get('SUPABASE_DB_URL'),
+  SUPABASE_URL: supabaseUrl,
+  COOKIE_SAME_SITE: 'none',
+  HERMES_EDGE_RUNTIME: 'true',
+  HERMES_PROACTIVE_DELIVERY: 'observe',
+  HERMES_PROACTIVE_BACKGROUND: 'false',
+  DEMO_MODE: 'false',
+});
+(globalThis as typeof globalThis & { __HERMES_EDGE_ENV?: Record<string, string | undefined> })
+  .__HERMES_EDGE_ENV = edgeEnvironment;
+
+const { buildApp } = await import('./hermes-api.mjs');
+const app = await buildApp();
+const functionPrefix = '/functions/v1/api';
+const runtimePrefix = '/api';
+
+function routeUrl(requestUrl: string): string {
+  const url = new URL(requestUrl);
+  const fullPrefixAt = url.pathname.indexOf(functionPrefix);
+  let path = fullPrefixAt >= 0 ? url.pathname.slice(fullPrefixAt + functionPrefix.length) : url.pathname;
+  if (path === runtimePrefix || path.startsWith(`${runtimePrefix}/`)) {
+    path = path.slice(runtimePrefix.length);
+  }
+  return `${path || '/'}${url.search}`;
+}
+
+Deno.serve(async (request) => {
+  const routedUrl = routeUrl(request.url);
+  const payload = ['GET', 'HEAD'].includes(request.method)
+    ? undefined
+    : Buffer.from(await request.arrayBuffer());
+  const result = await app.inject({
+    method: request.method,
+    url: routedUrl,
+    headers: Object.fromEntries(request.headers.entries()),
+    payload,
+  });
+
+  const headers = new Headers();
+  for (const [name, value] of Object.entries(result.headers)) {
+    if (value === undefined) continue;
+    if (Array.isArray(value)) {
+      for (const item of value) headers.append(name, String(item));
+    } else {
+      headers.set(name, String(value));
+    }
+  }
+
+  return new Response(result.rawPayload, { status: result.statusCode, headers });
+});

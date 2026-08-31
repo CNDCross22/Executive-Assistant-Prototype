@@ -29,6 +29,7 @@ function msg(p: Partial<MailMessage> & { id: string; subject: string }): MailMes
     from: null,
     toRecipients: [{ name: 'Sarah', address: DEMO_EMAIL }],
     ccRecipients: [],
+    bccRecipients: [],
     receivedAt: hoursAgo(2),
     sentAt: hoursAgo(2),
     isRead: false,
@@ -167,7 +168,27 @@ export function fixtureMailService(): ToolContext['mail'] {
     async thread(conversationId: string) {
       return [...DEMO_INBOX, ...DEMO_SENT].filter((m) => m.conversationId === conversationId);
     },
+    async listAttachments() { return []; },
+    async readAttachmentText() { throw new Error('The demo mailbox has no readable attachment fixture.'); },
   } as unknown as ToolContext['mail'];
+}
+
+export function fixtureTeamsService(): ToolContext['teams'] {
+  return {
+    async listJoinedTeams() { return []; },
+    async listChannels() { return []; },
+    async listChannelMessages() { return []; },
+  } as unknown as ToolContext['teams'];
+}
+
+export function fixtureFilesService(): ToolContext['files'] {
+  return {
+    async listOneDrive() { return []; },
+    async searchOneDrive() { return []; },
+    async searchSites() { return []; },
+    async listSiteFiles() { return []; },
+    async readText() { throw new Error('The demo workspace has no readable file fixture.'); },
+  } as unknown as ToolContext['files'];
 }
 
 /** Pending proposals for the demo dashboard. Never written to the database. */

@@ -12,14 +12,24 @@
     "node": ">=22"
   },
   "scripts": {
-    "dev": "npm run dev --workspace=apps/api & npm run dev --workspace=apps/web",
+    "dev": "node scripts/dev.mjs",
     "dev:api": "npm run dev --workspace=apps/api",
     "dev:web": "npm run dev --workspace=apps/web",
     "build": "npm run build --workspace=packages/shared && npm run build --workspace=apps/api && npm run build --workspace=apps/web",
     "typecheck": "npm run typecheck --workspaces --if-present",
-    "test": "tsx --test apps/api/src/__tests__/*.test.ts",
+    "test": "npm run build --workspace=apps/api && node --test apps/api/dist/__tests__/*.test.js",
+    "eval:behaviour": "npm run build --workspace=apps/api && node apps/api/dist/evals/run.js",
     "gen:secrets": "node scripts/gen-secrets.mjs",
     "db:migrate": "node scripts/migrate.mjs",
-    "test:agent": "tsx apps/api/src/agent/harness.ts"
+   "test:agent": "tsx apps/api/src/agent/harness.ts",
+    "test:directory": "npm run build --workspace=apps/api && node apps/api/dist/dev/directory-check.js",
+    "test:graph": "npm run build --workspace=apps/api && node apps/api/dist/dev/graph-smoke.js",
+    "uat:live": "npm run build --workspace=apps/api && node apps/api/dist/dev/live-content-uat.js",
+    "release:audit": "npm run build --workspace=apps/api && node apps/api/dist/dev/release-audit.js",
+    "build:edge": "node scripts/build-edge.mjs",
+    "deploy:edge": "npm run build:edge && supabase functions deploy api --project-ref wkqhlcilewyskpfvndsd --no-verify-jwt"
+  },
+  "devDependencies": {
+    "esbuild": "^0.28.2"
   }
 }

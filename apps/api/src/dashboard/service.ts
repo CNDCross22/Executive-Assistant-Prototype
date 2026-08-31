@@ -12,6 +12,7 @@ import type { MailService } from '../graph/mail.service.js';
 import { needsAttention, findFollowUps, looksAutomated } from '../mail/triage.js';
 import { assessSuspicion } from '../mail/suspicion.js';
 import { listMemory } from '../memory/store.js';
+import type { ExecutiveImpact, RecommendedAction } from '../mail/executive.js';
 
 export interface DashboardItem {
   ref: string;
@@ -25,6 +26,16 @@ export interface DashboardItem {
   external: boolean;
   importance: 'low' | 'normal' | 'high';
   reasons: string[];
+  priorityScore: number;
+  deterministicScore: number;
+  executiveAdjustment: number;
+  request: string | null;
+  decisionRequired: boolean;
+  statedDeadline: { statedText: string; evidence: string; parsedDate?: string } | null;
+  consequence: string | null;
+  impacts: ExecutiveImpact[];
+  recommendation: { action: RecommendedAction; reason: string };
+  hasUninspectedAttachments: boolean;
   preview: string;
   /** Set when the message looks like phishing or a prompt-injection attempt. */
   warning?: string;
@@ -32,8 +43,10 @@ export interface DashboardItem {
 }
 
 export interface FollowUpItem {
+  conversationId?: string;
   person: string;
   subject: string;
+  lastMessageAt?: string;
   daysWaiting: number;
   webLink: string;
 }
@@ -82,6 +95,16 @@ export async function buildDashboard(
       external: m.isExternal,
       importance: m.importance,
       reasons: m.reasons,
+      priorityScore: m.score,
+      deterministicScore: m.deterministicScore,
+      executiveAdjustment: m.executiveAdjustment,
+      request: m.executive.request,
+      decisionRequired: m.executive.decisionRequired,
+      statedDeadline: m.executive.deadline,
+      consequence: m.executive.consequence,
+      impacts: m.executive.impacts,
+      recommendation: m.executive.recommendation,
+      hasUninspectedAttachments: m.hasAttachments,
       preview: m.bodyPreview.slice(0, 180),
       ...(suspicion.suspicious
         ? { warning: 'This looks like a phishing or prompt-injection attempt. Nothing has been acted on.' }
@@ -90,9 +113,11 @@ export async function buildDashboard(
     };
   });
 
-  const shape = (f: { counterpart: string; subject: string; daysWaiting: number; webLink: string }): FollowUpItem => ({
+  const shape = (f: { conversationId: string; counterpart: string; subject: string; lastMessageAt: string; daysWaiting: number; webLink: string }): FollowUpItem => ({
+    conversationId: f.conversationId,
     person: f.counterpart.replace(/\s*<[^>]+>$/, '').trim() || f.counterpart,
     subject: f.subject,
+    lastMessageAt: f.lastMessageAt,
     daysWaiting: f.daysWaiting,
     webLink: f.webLink,
   });

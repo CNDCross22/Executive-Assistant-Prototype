@@ -106,6 +106,16 @@ export function toIana(tz: string | null | undefined): string {
   return 'UTC';
 }
 
+/** Convert an IANA identifier back to the Windows name expected by Outlook APIs. */
+export function toWindows(tz: string | null | undefined): string {
+  if (!tz) return 'UTC';
+  const trimmed = tz.trim();
+  const windows = Object.keys(WINDOWS_TO_IANA).find((key) => key.toLowerCase() === trimmed.toLowerCase());
+  if (windows) return windows;
+  const pair = Object.entries(WINDOWS_TO_IANA).find(([, iana]) => iana.toLowerCase() === trimmed.toLowerCase());
+  return pair?.[0] ?? trimmed;
+}
+
 /** Format a date safely, never throwing on a bad zone. */
 export function formatInZone(
   date: Date,

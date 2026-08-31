@@ -1,6 +1,7 @@
 import { useQuery } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import { useEscape } from '../lib/hooks';
+import Icon from './Icon';
 
 interface Address {
   name: string;
@@ -18,6 +19,14 @@ interface FullMessage {
   isExternal: boolean;
   importance: 'low' | 'normal' | 'high';
   hasAttachments: boolean;
+  attachments: Array<{
+    name: string;
+    contentType: string;
+    size: number;
+    isInline: boolean;
+    kind: 'file' | 'item' | 'reference' | 'unknown';
+    textSupported: boolean;
+  }>;
   webLink: string;
   /** Plain text. The API strips HTML before it ever reaches us. */
   body: string;
@@ -87,8 +96,8 @@ export default function MessageViewer({
                 Open in Outlook →
               </a>
             )}
-            <button className="label" style={{ background: 'none', border: 'none' }} onClick={onClose}>
-              Close
+            <button className="icon-button" onClick={onClose} aria-label="Close message" title="Close message">
+              <Icon name="close" />
             </button>
           </div>
         </div>
@@ -170,6 +179,24 @@ export default function MessageViewer({
               <div className="reply" style={{ whiteSpace: 'pre-wrap' }}>
                 {data.body || <span style={{ color: 'var(--muted)' }}>This message has no text body.</span>}
               </div>
+
+              {data.attachments.length > 0 && (
+                <section className="mt-6 pt-4" style={{ borderTop: '1px solid var(--line-soft)' }} aria-label="Attachments">
+                  <p className="label mb-2">Attachments</p>
+                  <div className="flex flex-col gap-2">
+                    {data.attachments.map((attachment, index) => (
+                      <div key={`${attachment.name}-${index}`} className="rounded px-3 py-2" style={{ background: 'var(--sunk)' }}>
+                        <p className="text-[0.95rem]" style={{ fontWeight: 600 }}>{attachment.name}</p>
+                        <p className="label mt-0.5">
+                          {attachment.kind} · {Math.max(1, Math.ceil(attachment.size / 1024)).toLocaleString()} KB
+                          {attachment.textSupported ? ' · text can be inspected by Hermes' : ' · metadata only'}
+                        </p>
+                      </div>
+                    ))}
+                  </div>
+                  <p className="label mt-2">Attachments are not executed or malware-scanned.</p>
+                </section>
+              )}
             </article>
           )}
         </div>
@@ -199,7 +226,7 @@ export default function MessageViewer({
               </a>
             </div>
             <p className="label mt-2">
-              Your assistant cannot reply or delete yet — those need approval, which is not switched on.
+              Any reply, move or delete still requires a separate approval.
             </p>
           </div>
         )}

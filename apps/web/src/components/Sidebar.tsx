@@ -1,7 +1,8 @@
 import { useState } from 'react';
-import type { ConversationSummary, MeResponse, Spend } from '../lib/api';
+import type { ConversationSummary, MeResponse } from '../lib/api';
 import { useTheme } from '../lib/theme';
 import { useEscape } from '../lib/hooks';
+import Icon, { type IconName } from './Icon';
 
 /** Group threads the way a person thinks about them, not by raw timestamp. */
 function groupByRecency(conversations: ConversationSummary[]) {
@@ -28,7 +29,7 @@ function groupByRecency(conversations: ConversationSummary[]) {
   return groups.filter((g) => g.items.length > 0);
 }
 
-export type View = 'dashboard' | 'assistant' | 'memory';
+export type View = 'dashboard' | 'briefing' | 'assistant' | 'memory';
 
 interface Props {
   view: View;
@@ -37,7 +38,6 @@ interface Props {
   activeId: string | null;
   user: NonNullable<MeResponse['user']>;
   demo: boolean;
-  spend?: Spend;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
@@ -52,7 +52,6 @@ export default function Sidebar({
   activeId,
   user,
   demo,
-  spend,
   onSelect,
   onNew,
   onDelete,
@@ -62,6 +61,12 @@ export default function Sidebar({
   const [confirming, setConfirming] = useState<string | null>(null);
   const { theme, toggle } = useTheme();
   const groups = groupByRecency(conversations);
+  const navigation: { view: View; label: string; icon: IconName }[] = [
+    { view: 'dashboard', label: 'Today', icon: 'today' },
+    { view: 'briefing', label: 'Briefing', icon: 'briefing' },
+    { view: 'assistant', label: 'Assistant', icon: 'assistant' },
+    { view: 'memory', label: 'Preferences', icon: 'preferences' },
+  ];
 
   // A half-finished confirmation must not survive the next thing she does.
   useEscape(confirming !== null, () => setConfirming(null));
@@ -72,9 +77,15 @@ export default function Sidebar({
       style={{ background: 'var(--sunk)', borderRight: '1px solid var(--line)' }}
     >
       {/* brand */}
-      <div className="flex items-center justify-between px-4 pb-2.5 pt-4">
-        <div className="flex items-baseline gap-2">
-          <span className="h-display text-[1.05rem]">Executive Assistant</span>
+      <div className="flex items-center justify-between px-5 pb-4 pt-5">
+        <div className="flex items-center gap-2.5">
+          <span
+            className="flex h-8 w-8 items-center justify-center rounded-lg text-sm"
+            style={{ background: 'var(--ink)', color: 'var(--ground)', fontFamily: 'var(--font-display)', fontWeight: 700 }}
+          >
+            EA
+          </span>
+          <span className="h-display text-[1rem]">Director workspace</span>
           {demo && (
             <span className="label" style={{ color: 'var(--clay)' }}>
               demo
@@ -82,57 +93,36 @@ export default function Sidebar({
           )}
         </div>
         {onClose && (
-          <button className="label lg:hidden" style={{ background: 'none', border: 'none' }} onClick={onClose}>
-            Close
+          <button className="icon-button lg:hidden" onClick={onClose} aria-label="Close navigation">
+            <Icon name="close" />
           </button>
         )}
       </div>
 
-      {/*
-        Segmented switcher, on a three-column grid.
-
-        Content-sized tabs pushed apart with justify-between looked wrong: the
-        gaps between labels grew to whatever was left over, while the outer two
-        stayed hugging the border. Equal columns give an even rhythm regardless
-        of how long the labels are.
-
-        `min-w-0` is load-bearing — grid items default to min-width:auto, so
-        without it a long label refuses to shrink and pushes its column wide.
-      */}
-      <div
-        className="mx-2.5 mb-1 grid grid-cols-3 gap-0.5 rounded-md p-0.5"
-        style={{ background: 'var(--ground)', border: '1px solid var(--line)' }}
-        role="tablist"
-      >
-        {(['dashboard', 'assistant', 'memory'] as const).map((v) => (
+      <nav className="mx-3 flex flex-col gap-1" aria-label="Workspace">
+        {navigation.map((item) => (
           <button
-            key={v}
-            role="tab"
-            aria-selected={view === v}
-            /*
-              Weight is held constant across states. Selection used to thicken
-              it, which changed the label's width and made it truncate inside
-              its own column — so only background and colour signal selection,
-              and nothing reflows when you switch.
-            */
-            className="switch-btn min-w-0 truncate rounded px-1.5 py-1.5 text-center text-[0.78rem]"
+            key={item.view}
+            aria-current={view === item.view ? 'page' : undefined}
+            className="switch-btn flex min-w-0 items-center gap-3 rounded-lg px-3 py-2.5 text-left text-[0.9rem]"
             style={{
-              background: view === v ? 'var(--surface)' : 'transparent',
-              boxShadow: view === v ? 'var(--shadow)' : 'none',
-              color: view === v ? 'var(--ink)' : 'var(--muted)',
+              background: view === item.view ? 'var(--surface)' : 'transparent',
+              boxShadow: view === item.view ? 'var(--shadow)' : 'none',
+              color: view === item.view ? 'var(--ink)' : 'var(--muted)',
               fontFamily: 'var(--font-display)',
               fontWeight: 600,
-              border: 'none',
+              border: view === item.view ? '1px solid var(--line)' : '1px solid transparent',
             }}
-            onClick={() => onViewChange(v)}
+            onClick={() => onViewChange(item.view)}
           >
-            {v === 'dashboard' ? 'Dashboard' : v === 'assistant' ? 'Assistant' : 'Memory'}
+            <Icon name={item.icon} />
+            {item.label}
           </button>
         ))}
-      </div>
+      </nav>
 
       {view === 'assistant' && (
-        <div className="px-3 py-2.5">
+        <div className="px-3 pb-2 pt-4">
           <button className="btn w-full" onClick={onNew}>
             New conversation
           </button>
@@ -140,7 +130,7 @@ export default function Sidebar({
       )}
 
       {/* threads */}
-      <nav className="scroll min-h-0 flex-1 px-3 pb-2" aria-label="Conversations">
+      {view === 'assistant' ? <nav className="scroll mt-2 min-h-0 flex-1 px-3 pb-2" aria-label="Conversations">
         {conversations.length === 0 ? (
           <p
             className="px-3 pb-2 pt-1 text-[0.84rem] leading-relaxed"
@@ -234,30 +224,10 @@ export default function Sidebar({
             </div>
           ))
         )}
-      </nav>
+      </nav> : <div className="flex-1" />}
 
       {/* footer */}
       <div className="px-4 py-3" style={{ borderTop: '1px solid var(--line)' }}>
-        {spend && (
-          <div className="mb-3">
-            <div className="label mb-1 flex justify-between">
-              <span>AI spend</span>
-              <span style={{ color: spend.overBudget ? 'var(--clay)' : 'var(--muted)' }}>
-                {spend.monthToDate} / {spend.budget}
-              </span>
-            </div>
-            <div className="h-[3px] w-full overflow-hidden rounded-full" style={{ background: 'var(--line)' }}>
-              <div
-                className="h-full rounded-full transition-all"
-                style={{
-                  width: `${Math.min(100, spend.percentUsed)}%`,
-                  background: spend.overBudget ? 'var(--clay)' : 'var(--brass)',
-                }}
-              />
-            </div>
-          </div>
-        )}
-
         <p
           className="truncate"
           style={{ color: 'var(--ink)', fontFamily: 'var(--font-display)', fontWeight: 600, fontSize: '0.88rem' }}
@@ -276,7 +246,10 @@ export default function Sidebar({
               aria-label={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
               title={`Switch to ${theme === 'light' ? 'dark' : 'light'} mode`}
             >
-              {theme === 'light' ? '◐ Dark' : '◑ Light'}
+              <span className="flex items-center gap-1.5">
+                <Icon name={theme === 'light' ? 'moon' : 'sun'} size={14} />
+                {theme === 'light' ? 'Dark' : 'Light'}
+              </span>
             </button>
             <button
               className="label rounded px-1.5 py-1"

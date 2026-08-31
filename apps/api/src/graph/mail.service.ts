@@ -1,4 +1,5 @@
 import type { GraphClient } from './client.js';
+import { extractSafeText, MAX_EXTERNAL_FILE_BYTES, safeFileName, supportsTextExtraction, type ExtractedText } from '../content/safe-text.js';
 
 /**
  * Application-shaped mail objects.
@@ -18,6 +19,7 @@ export interface MailMessage {
   from: MailAddress | null;
   toRecipients: MailAddress[];
   ccRecipients: MailAddress[];
+  bccRecipients: MailAddress[];
   receivedAt: string;
   sentAt: string;
   isRead: boolean;
@@ -34,6 +36,27 @@ export interface MailMessageDetail extends MailMessage {
   bodyType: 'text' | 'html';
 }
 
+export interface MailAttachment {
+  id: string;
+  name: string;
+  contentType: string;
+  size: number;
+  isInline: boolean;
+  kind: 'file' | 'item' | 'reference' | 'unknown';
+  textSupported: boolean;
+  lastModifiedAt: string;
+}
+
+interface GraphAttachment {
+  '@odata.type'?: string;
+  id: string;
+  name?: string;
+  contentType?: string;
+  size?: number;
+  isInline?: boolean;
+  lastModifiedDateTime?: string;
+}
+
 interface GraphRecipient {
   emailAddress?: { name?: string; address?: string };
 }
@@ -46,6 +69,7 @@ interface GraphMessage {
   sender?: GraphRecipient;
   toRecipients?: GraphRecipient[];
   ccRecipients?: GraphRecipient[];
+  bccRecipients?: GraphRecipient[];
   receivedDateTime?: string;
   sentDateTime?: string;
   isRead?: boolean;
@@ -57,7 +81,7 @@ interface GraphMessage {
 }
 
 const LIST_SELECT =
-  'id,conversationId,subject,from,toRecipients,ccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments,importance,bodyPreview,webLink';
+  'id,conversationId,subject,from,toRecipients,ccRecipients,bccRecipients,receivedDateTime,sentDateTime,isRead,hasAttachments,importance,bodyPreview,webLink';
 
 function toAddress(r: GraphRecipient | undefined): MailAddress | null {
   const a = r?.emailAddress;
@@ -89,7 +113,7 @@ export function htmlToText(html: string): string {
 }
 
 export interface ListMailOptions {
-  folder?: 'inbox' | 'sentitems' | 'drafts';
+  folder?: 'inbox' | 'sentitems' | 'drafts' | 'archive' | 'deleteditems';
   limit?: number;
   unreadOnly?: boolean;
   /** ISO date; only messages received at or after this. */
@@ -113,6 +137,7 @@ export class MailService {
       from,
       toRecipients: toAddresses(m.toRecipients),
       ccRecipients: toAddresses(m.ccRecipients),
+      bccRecipients: toAddresses(m.bccRecipients),
       receivedAt: m.receivedDateTime ?? '',
       sentAt: m.sentDateTime ?? '',
       isRead: m.isRead ?? false,
@@ -189,6 +214,64 @@ export class MailService {
     };
   }
 
+  private shapeAttachment(a: GraphAttachment): MailAttachment {
+    const graphType = a['@odata.type'] ?? '';
+    const kind = graphType.includes('fileAttachment') ? 'file'
+      : graphType.includes('itemAttachment') ? 'item'
+        : graphType.includes('referenceAttachment') ? 'reference' : 'unknown';
+    const name = safeFileName(a.name);
+    return {
+      id: a.id,
+      name,
+      contentType: a.contentType ?? 'application/octet-stream',
+      size: Math.max(0, a.size ?? 0),
+      isInline: a.isInline ?? false,
+      kind,
+      textSupported: kind === 'file' && supportsTextExtraction(name, a.contentType),
+      lastModifiedAt: a.lastModifiedDateTime ?? '',
+    };
+  }
+
+  async listAttachments(messageId: string): Promise<MailAttachment[]> {
+    const rows = await this.graph.collect<GraphAttachment>(
+      `/me/messages/${encodeURIComponent(messageId)}/attachments`,
+      { query: { $select: 'id,name,contentType,size,isInline,lastModifiedDateTime' }, label: 'mail.attachments.list' },
+      2,
+    );
+    return rows.map((row) => this.shapeAttachment(row));
+  }
+
+  async readAttachmentText(input: {
+    messageId: string;
+    attachmentId: string;
+    startCharacter?: number;
+    maxCharacters?: number;
+  }): Promise<MailAttachment & ExtractedText> {
+    const metadata = await this.graph.request<GraphAttachment>(
+      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}`,
+      { query: { $select: 'id,name,contentType,size,isInline,lastModifiedDateTime' }, label: 'mail.attachment.metadata' },
+    );
+    const attachment = this.shapeAttachment(metadata);
+    if (!attachment.textSupported || attachment.kind !== 'file') {
+      return Promise.reject(new Error(`I cannot safely extract text from ${attachment.name}.`));
+    }
+    if (attachment.size > MAX_EXTERNAL_FILE_BYTES) {
+      return Promise.reject(new Error(`${attachment.name} is larger than the 5 MB inspection limit.`));
+    }
+    const file = await this.graph.requestBytes(
+      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`,
+      { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'mail.attachment.content' },
+    );
+    const extracted = extractSafeText({
+      bytes: file.bytes,
+      name: attachment.name,
+      contentType: attachment.contentType || file.contentType,
+      startCharacter: input.startCharacter,
+      maxCharacters: input.maxCharacters,
+    });
+    return { ...attachment, ...extracted };
+  }
+
   /** Every message in one thread, oldest first. */
   async thread(conversationId: string, limit = 20): Promise<MailMessage[]> {
     const messages = await this.graph.collect<GraphMessage>(
@@ -207,5 +290,98 @@ export class MailService {
     return messages
       .map((m) => this.shape(m))
       .sort((a, b) => a.receivedAt.localeCompare(b.receivedAt));
+  }
+
+  async listFolders(): Promise<Array<{ id: string; name: string; unread: number; total: number }>> {
+    const rows = await this.graph.collect<{ id: string; displayName?: string; unreadItemCount?: number; totalItemCount?: number }>(
+      '/me/mailFolders',
+      { query: { $select: 'id,displayName,unreadItemCount,totalItemCount', $top: 100 }, label: 'mail.folders' },
+      2,
+    );
+    return rows.map((f) => ({ id: f.id, name: f.displayName ?? 'Folder', unread: f.unreadItemCount ?? 0, total: f.totalItemCount ?? 0 }));
+  }
+
+  async getFolder(id: string): Promise<{ id: string; name: string }> {
+    const folder = await this.graph.request<{ id: string; displayName?: string }>(`/me/mailFolders/${id}`, {
+      query: { $select: 'id,displayName' }, label: 'mail.folder.get',
+    });
+    return { id: folder.id, name: folder.displayName ?? 'Folder' };
+  }
+
+  async createDraft(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }): Promise<{ id: string; subject: string }> {
+    const message = await this.graph.request<GraphMessage>('/me/messages', {
+      method: 'POST',
+      body: {
+        subject: input.subject,
+        body: { contentType: 'Text', content: input.body },
+        toRecipients: input.to.map((address) => ({ emailAddress: { address } })),
+        ccRecipients: (input.cc ?? []).map((address) => ({ emailAddress: { address } })),
+        bccRecipients: (input.bcc ?? []).map((address) => ({ emailAddress: { address } })),
+      },
+      label: 'mail.createDraft',
+    });
+    return { id: message.id, subject: message.subject ?? input.subject };
+  }
+
+  async createReplyDraft(messageId: string, body: string): Promise<{ id: string; subject: string }> {
+    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/createReply`, {
+      method: 'POST', body: { comment: body }, label: 'mail.createReplyDraft',
+    });
+    return { id: draft.id, subject: draft.subject ?? 'Reply' };
+  }
+
+  async send(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }): Promise<void> {
+    await this.graph.request<void>('/me/sendMail', {
+      method: 'POST',
+      body: {
+        message: {
+          subject: input.subject,
+          body: { contentType: 'Text', content: input.body },
+          toRecipients: input.to.map((address) => ({ emailAddress: { address } })),
+          ccRecipients: (input.cc ?? []).map((address) => ({ emailAddress: { address } })),
+          bccRecipients: (input.bcc ?? []).map((address) => ({ emailAddress: { address } })),
+        },
+        saveToSentItems: true,
+      },
+      label: 'mail.send',
+    });
+  }
+
+  async reply(messageId: string, body: string, replyAll = false): Promise<void> {
+    await this.graph.request<void>(`/me/messages/${messageId}/${replyAll ? 'replyAll' : 'reply'}`, {
+      method: 'POST', body: { comment: body }, label: replyAll ? 'mail.replyAll' : 'mail.reply',
+    });
+  }
+
+  async forward(messageId: string, to: string[], comment: string): Promise<void> {
+    await this.graph.request<void>(`/me/messages/${messageId}/forward`, {
+      method: 'POST',
+      body: { comment, toRecipients: to.map((address) => ({ emailAddress: { address } })) },
+      label: 'mail.forward',
+    });
+  }
+
+  async sendDraft(messageId: string): Promise<void> {
+    await this.graph.request<void>(`/me/messages/${messageId}/send`, { method: 'POST', label: 'mail.sendDraft' });
+  }
+
+  async setRead(messageId: string, isRead: boolean): Promise<void> {
+    await this.graph.request(`/me/messages/${messageId}`, { method: 'PATCH', body: { isRead }, label: 'mail.setRead' });
+  }
+
+  async setFlag(messageId: string, flagged: boolean): Promise<void> {
+    await this.graph.request(`/me/messages/${messageId}`, {
+      method: 'PATCH', body: { flag: { flagStatus: flagged ? 'flagged' : 'notFlagged' } }, label: 'mail.setFlag',
+    });
+  }
+
+  async move(messageId: string, destinationId: string): Promise<void> {
+    await this.graph.request(`/me/messages/${messageId}/move`, {
+      method: 'POST', body: { destinationId }, label: 'mail.move',
+    });
+  }
+
+  async delete(messageId: string): Promise<void> {
+    await this.graph.request(`/me/messages/${messageId}`, { method: 'DELETE', label: 'mail.delete' });
   }
 }

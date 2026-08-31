@@ -31,6 +31,7 @@ export async function mailRoutes(app: FastifyInstance): Promise<void> {
 
     const mail = await mailFor(request);
     const message = await mail.get(id);
+    const attachments = message.hasAttachments ? await mail.listAttachments(id) : [];
 
     const suspicion = assessSuspicion([message.subject, message.body].join(' '), message.from?.address);
 
@@ -45,6 +46,7 @@ export async function mailRoutes(app: FastifyInstance): Promise<void> {
       isExternal: message.isExternal,
       importance: message.importance,
       hasAttachments: message.hasAttachments,
+      attachments: attachments.map(({ id: _id, ...attachment }) => attachment),
       webLink: message.webLink,
       /** Plain text. Never HTML. */
       body: message.body,

@@ -1,9 +1,6 @@
 import type { FastifyInstance } from 'fastify';
-import { env, getSetupStatus } from '../config/env.js';
-import { CAPABILITIES } from '../config/graphScopes.js';
+import { getSetupStatus } from '../config/env.js';
 import { pingDb } from '../db/index.js';
-import { soulStatus } from '../agent/soul.js';
-import { spendSummary } from '../ai/cost.js';
 import { requireAuth, ownDomainOf } from '../auth/session.js';
 import { UserService } from '../graph/user.service.js';
 import { MailService } from '../graph/mail.service.js';
@@ -22,20 +19,6 @@ export async function systemRoutes(app: FastifyInstance): Promise<void> {
         c.key === 'database' ? { ...c, ready: db.ok, detail: db.ok ? 'Connected' : c.detail } : c,
       ),
       ready: setup.checks.filter((c) => c.key !== 'database').every((c) => c.ready) && db.ok,
-      capabilities: CAPABILITIES.map(({ key, label, enabled, note, scopes }) => ({
-        key,
-        label,
-        enabled,
-        note,
-        scopes,
-      })),
-      ai: {
-        provider: env.AI_PROVIDER,
-        model: env.AI_MODEL,
-        baseUrl: env.AI_BASE_URL,
-      },
-      soul: soulStatus(),
-      spend: await spendSummary(),
     };
   });
 

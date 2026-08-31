@@ -8,6 +8,13 @@ import { hasDb, requireDb } from '../db/index.js';
 import { randomId } from '../lib/crypto.js';
 import { logger } from '../lib/logger.js';
 import { isUuid } from '../lib/errors.js';
+import type { ActionPreview } from '../agent/tools/types.js';
+
+export interface StoredApproval {
+  id: string;
+  preview: ActionPreview;
+  expiresAt: string;
+}
 
 export interface ConversationSummary {
   id: string;
@@ -21,7 +28,8 @@ export interface StoredMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
-  steps: { tool: string; summary: string; status: 'success' | 'failed' }[];
+  steps: { tool: string; summary: string; status: 'success' | 'failed' | 'approval_required' }[];
+  approval?: StoredApproval;
   model: string | null;
   durationMs: number | null;
   wasBlocked: boolean;
@@ -33,9 +41,38 @@ export interface AppendArgs {
   role: 'user' | 'assistant';
   content: string;
   steps?: StoredMessage['steps'];
+  approval?: StoredApproval;
   model?: string | null;
   durationMs?: number | null;
   wasBlocked?: boolean;
+}
+
+/**
+ * Historical rows predate the current step schema. Postgres JSONB normally
+ * returns an array, but old imports may contain a JSON string or wrapper
+ * object. Normalise at the API boundary so a bad row cannot crash chat history.
+ */
+export function normaliseSteps(value: unknown): StoredMessage['steps'] {
+  let candidate = value;
+  if (typeof candidate === 'string') {
+    try {
+      candidate = JSON.parse(candidate);
+    } catch {
+      return [];
+    }
+  }
+  if (candidate && typeof candidate === 'object' && !Array.isArray(candidate) && 'steps' in candidate) {
+    candidate = (candidate as { steps?: unknown }).steps;
+  }
+  if (!Array.isArray(candidate)) return [];
+
+  return candidate.flatMap((item) => {
+    if (!item || typeof item !== 'object') return [];
+    const row = item as Record<string, unknown>;
+    if (typeof row.tool !== 'string' || typeof row.summary !== 'string') return [];
+    const status = row.status === 'success' || row.status === 'approval_required' ? row.status : 'failed';
+    return [{ tool: row.tool, summary: row.summary, status }];
+  });
 }
 
 /** A readable title from her first message, without calling the model. */
@@ -127,14 +164,15 @@ export async function getMessages(userId: string, conversationId: string): Promi
       id: string;
       role: string;
       content: string;
-      steps: StoredMessage['steps'];
+      steps: unknown;
+      approval: unknown;
       model: string | null;
       duration_ms: number | null;
       was_blocked: boolean;
       created_at: Date;
     }[]
   >`
-    select m.id, m.role, m.content, m.steps, m.model, m.duration_ms, m.was_blocked, m.created_at
+    select m.id, m.role, m.content, m.steps, m.approval, m.model, m.duration_ms, m.was_blocked, m.created_at
     from conversation_messages m
     join conversations c on c.id = m.conversation_id
     where m.conversation_id = ${conversationId} and c.user_id = ${userId}
@@ -146,7 +184,8 @@ export async function getMessages(userId: string, conversationId: string): Promi
     id: r.id,
     role: r.role === 'user' ? 'user' : 'assistant',
     content: r.content,
-    steps: r.steps ?? [],
+    steps: normaliseSteps(r.steps),
+    approval: normaliseStoredApproval(r.approval),
     model: r.model,
     durationMs: r.duration_ms,
     wasBlocked: r.was_blocked,
@@ -163,6 +202,7 @@ export async function appendMessage(args: AppendArgs): Promise<void> {
       role: args.role,
       content: args.content,
       steps: args.steps ?? [],
+      approval: args.approval,
       model: args.model ?? null,
       durationMs: args.durationMs ?? null,
       wasBlocked: args.wasBlocked ?? false,
@@ -176,16 +216,47 @@ export async function appendMessage(args: AppendArgs): Promise<void> {
   try {
     const db = requireDb();
     await db`
-      insert into conversation_messages (conversation_id, role, content, steps, model, duration_ms, was_blocked)
+      insert into conversation_messages (conversation_id, role, content, steps, approval, model, duration_ms, was_blocked)
       values (
         ${args.conversationId}, ${args.role}, ${args.content},
         ${JSON.stringify(args.steps ?? [])}::jsonb,
+        ${args.approval ? JSON.stringify(args.approval) : null}::jsonb,
         ${args.model ?? null}, ${args.durationMs ?? null}, ${args.wasBlocked ?? false}
       )
     `;
   } catch (err) {
     logger.error({ err, conversationId: args.conversationId }, 'Could not save message');
   }
+}
+
+export function normaliseStoredApproval(value: unknown): StoredApproval | undefined {
+  let candidate = value;
+  if (typeof candidate === 'string') {
+    try { candidate = JSON.parse(candidate); } catch { return undefined; }
+  }
+  if (!candidate || typeof candidate !== 'object' || Array.isArray(candidate)) return undefined;
+  const row = candidate as Record<string, unknown>;
+  if (typeof row.id !== 'string' || typeof row.expiresAt !== 'string') return undefined;
+  if (!row.preview || typeof row.preview !== 'object' || Array.isArray(row.preview)) return undefined;
+  const preview = row.preview as Record<string, unknown>;
+  if (typeof preview.title !== 'string' || typeof preview.summary !== 'string' || !Array.isArray(preview.details)) return undefined;
+  const details = preview.details.flatMap((detail) => {
+    if (!detail || typeof detail !== 'object') return [];
+    const item = detail as Record<string, unknown>;
+    return typeof item.label === 'string' && typeof item.value === 'string'
+      ? [{ label: item.label, value: item.value }]
+      : [];
+  });
+  return {
+    id: row.id,
+    expiresAt: row.expiresAt,
+    preview: {
+      title: preview.title,
+      summary: preview.summary,
+      details,
+      ...(typeof preview.warning === 'string' ? { warning: preview.warning } : {}),
+    },
+  };
 }
 
 export async function ownsConversation(userId: string, conversationId: string): Promise<boolean> {

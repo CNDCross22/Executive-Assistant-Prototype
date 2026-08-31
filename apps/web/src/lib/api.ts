@@ -49,9 +49,9 @@ async function request<T>(path: string, init: RequestInit = {}): Promise<T> {
 export const api = {
   get: <T>(path: string) => request<T>(path),
   post: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'POST', body: body ? JSON.stringify(body) : undefined }),
+    request<T>(path, { method: 'POST', body: body === undefined ? undefined : JSON.stringify(body) }),
   patch: <T>(path: string, body?: unknown) =>
-    request<T>(path, { method: 'PATCH', body: body ? JSON.stringify(body) : undefined }),
+    request<T>(path, { method: 'PATCH', body: body === undefined ? undefined : JSON.stringify(body) }),
   del: <T>(path: string) => request<T>(path, { method: 'DELETE' }),
 };
 
@@ -74,13 +74,24 @@ export interface Spend {
   callsThisMonth: number;
   projectedMonthEnd: string;
   overBudget: boolean;
+  categories?: Record<string, {
+    monthToDate: string;
+    budget: string | null;
+    percentUsed: number | null;
+    overBudget: boolean;
+  }>;
 }
 
 export interface SetupResponse {
   ready: boolean;
   checks: SetupCheck[];
-  capabilities: { key: string; label: string; enabled: boolean; note: string; scopes: string[] }[];
-  ai: { provider: string; model: string; baseUrl: string };
+  capabilities?: { key: string; label: string; enabled: boolean; note: string; scopes: string[] }[];
+  ai?: {
+    provider: 'openai';
+    model: string;
+    roles?: Record<string, { model: string; reasoningEffort: string }>;
+    adaptiveResponseLimits?: boolean;
+  };
   soul?: { source: string; words: number; approxTokens: number };
   spend?: Spend;
 }
@@ -103,7 +114,20 @@ export interface MeResponse {
 export interface Step {
   tool: string;
   summary: string;
-  status: 'success' | 'failed';
+  status: 'success' | 'failed' | 'approval_required';
+}
+
+export interface ActionPreview {
+  title: string;
+  summary: string;
+  details: Array<{ label: string; value: string }>;
+  warning?: string;
+}
+
+export interface PendingApproval {
+  id: string;
+  preview: ActionPreview;
+  expiresAt: string;
 }
 
 export interface ConversationSummary {
@@ -119,6 +143,7 @@ export interface StoredMessage {
   role: 'user' | 'assistant';
   content: string;
   steps: Step[];
+  approval?: PendingApproval;
   model: string | null;
   durationMs: number | null;
   wasBlocked: boolean;
@@ -129,5 +154,6 @@ export interface ChatResponse {
   conversationId: string;
   reply: string;
   steps: Step[];
+  approval?: PendingApproval;
   meta: { iterations: number; model: string; durationMs: number };
 }

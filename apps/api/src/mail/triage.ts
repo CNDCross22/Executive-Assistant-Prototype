@@ -1,4 +1,6 @@
 import type { MailService, MailMessage } from '../graph/mail.service.js';
+import { assessSuspicion } from './suspicion.js';
+import { analyseMail, executivePrioritySignals, type ExecutiveMailAnalysis } from './executive.js';
 
 /**
  * The rules layer.
@@ -11,6 +13,11 @@ import type { MailService, MailMessage } from '../graph/mail.service.js';
 
 export interface TriagedMessage extends MailMessage {
   score: number;
+  /** Original deterministic routing score, preserved for audit and rollback. */
+  deterministicScore: number;
+  /** Additive, evidence-backed interpretation. */
+  executiveAdjustment: number;
+  executive: ExecutiveMailAnalysis;
   /** Plain-English reasons, in the order they were applied. */
   reasons: string[];
 }
@@ -59,7 +66,14 @@ export function scoreMessage(m: MailMessage, ctx: TriageContext): TriagedMessage
   const reasons: string[] = [];
 
   if (looksAutomated(m)) {
-    return { ...m, score: -50, reasons: ['Automated or bulk mail'] };
+    return {
+      ...m,
+      score: -50,
+      deterministicScore: -50,
+      executiveAdjustment: 0,
+      executive: analyseMail({ subject: m.subject, text: m.bodyPreview, hasAttachments: m.hasAttachments }),
+      reasons: ['Automated or bulk mail'],
+    };
   }
 
   const addressedDirectly = m.toRecipients.some((r) => r.address === ctx.me);
@@ -113,7 +127,18 @@ export function scoreMessage(m: MailMessage, ctx: TriageContext): TriagedMessage
     reasons.push('Sent to a large group');
   }
 
-  return { ...m, score, reasons };
+  const deterministicScore = score;
+  const suspicious = assessSuspicion(`${m.subject} ${m.bodyPreview}`, m.from?.address).suspicious;
+  const executive = analyseMail({
+    subject: m.subject,
+    text: m.bodyPreview,
+    hasAttachments: m.hasAttachments,
+    suspicious,
+  });
+  const semanticSignals = executivePrioritySignals(executive);
+  const executiveAdjustment = semanticSignals.reduce((total, signal) => total + signal.points, 0);
+  reasons.push(...semanticSignals.map((signal) => signal.reason));
+  return { ...m, score: score + executiveAdjustment, deterministicScore, executiveAdjustment, executive, reasons };
 }
 
 /** Build the signals that make scoring accurate, from her own sent mail. */

@@ -15,6 +15,9 @@ import { logger } from '../lib/logger.js';
 
 const here = path.dirname(fileURLToPath(import.meta.url));
 const SOUL_PATH = path.resolve(here, '../../../../soul.md');
+// The Edge build replaces this expression with the reviewed soul.md content.
+// Node development continues to load the editable file from disk.
+const BUNDLED_SOUL = process.env.HERMES_BUNDLED_SOUL;
 
 /** Everything above the first `---` on its own line is notes for the human. */
 const PREAMBLE_SEPARATOR = /^---\s*$/m;
@@ -32,7 +35,7 @@ function readSoulFile(): string | null {
   if (cached && cached.mtimeMs === stat.mtimeMs) return cached.text;
 
   try {
-    const raw = fs.readFileSync(SOUL_PATH, 'utf8');
+    const raw = BUNDLED_SOUL ?? fs.readFileSync(SOUL_PATH, 'utf8');
     const parts = raw.split(PREAMBLE_SEPARATOR);
     // Drop the editing notes; keep everything after the first separator.
     const body = (parts.length > 1 ? parts.slice(1).join('\n---\n') : raw).trim();

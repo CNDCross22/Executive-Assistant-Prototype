@@ -8,7 +8,8 @@
  *
  * Rules for everything in this file:
  *   - Only ever states facts that came from a tool.
- *   - Never summarises the CONTENTS of a message; it has not read one.
+ *   - Uses only bounded, deterministic evidence extracted from the preview.
+ *   - Never implies that an attachment or the full thread was inspected.
  *   - Falls through to the agent whenever the question is not a clean match.
  */
 import type { ToolContext } from './tools/types.js';
@@ -89,14 +90,23 @@ async function answerNeedsAttention(ctx: ToolContext): Promise<AgentResult> {
     const suspicion = assessSuspicion([m.subject, m.bodyPreview].join(' '), m.from?.address);
     if (suspicion.suspicious) {
       warnings.push(
-        `Be careful with one from ${who} <${m.from?.address ?? 'unknown'}> about "${m.subject}" — ` +
-          `it looks like a phishing attempt. I have not acted on it. Worth deleting and reporting.`,
+        `Be careful with one from ${who} <${m.from?.address ?? 'unknown'}> about "${m.subject}". ` +
+          `It looks like a phishing attempt. I have not acted on it. Worth deleting and reporting.`,
       );
       return null;
     }
 
-    const tail = flags.length ? ` — ${naturalList(flags)}` : '';
-    return `${who} about "${m.subject}", ${when}${tail}`;
+    const status = flags.length ? ` It is ${naturalList(flags)}.` : '';
+    const requested = m.executive.request ?? m.executive.unansweredQuestions[0];
+    if (requested) {
+      const deadline = m.executive.deadline
+        ? ` Stated deadline: ${m.executive.deadline.statedText}.`
+        : ' There is no stated deadline in the available preview.';
+      const decision = m.executive.decisionRequired ? ' This needs your decision.' : '';
+      const attachment = m.hasAttachments ? ' It has an attachment I have not inspected.' : '';
+      return `${who}: ${requested}${deadline}${decision}${attachment}${status}`;
+    }
+    return `${who}'s message about "${m.subject}" arrived ${when}.${status}`;
   });
 
   const real = lines.filter((l): l is string => l !== null);
@@ -114,13 +124,13 @@ async function answerNeedsAttention(ctx: ToolContext): Promise<AgentResult> {
       count === 0
         ? ''
         : count === 1
-          ? 'One thing needs you: '
+          ? 'One thing needs you. '
           : `${count === 2 ? 'Two' : count === 3 ? 'Three' : count === 4 ? 'Four' : String(count)} things need you. `;
 
-    const body = count === 1 ? `${real[0]}.` : real.map((l) => `${l}.`).join(' ');
+    const body = real.join(' ');
     const rest =
       result.filteredOutCount > 0
-        ? ` The other ${result.filteredOutCount} can wait — newsletters, automated mail, and group threads.`
+        ? ` The other ${result.filteredOutCount} can wait. They are newsletters, automated mail and group threads.`
         : '';
 
     reply = `${opener}${body}${rest}`;

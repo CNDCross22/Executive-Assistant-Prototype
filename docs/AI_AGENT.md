@@ -1,162 +1,104 @@
-# The Hermes agent
+# OpenAI agent runtime
 
-How a question becomes an answer, and where to change things.
+The application has one model integration: the official OpenAI API. Development is performed with Codex; production model calls use the API credits attached to `OPENAI_API_KEY`.
 
----
-
-## Switching AI provider
-
-This is the whole procedure. No code changes.
+## Configuration
 
 ```dotenv
-# OpenAI (current)
-AI_PROVIDER=openai-compatible
-AI_BASE_URL=https://api.openai.com/v1
-AI_MODEL=gpt-5-mini
-AI_API_KEY=sk-...
-
-# Azure OpenAI — keeps data inside your Microsoft tenant
-AI_BASE_URL=https://<resource>.openai.azure.com/openai/v1
-AI_MODEL=<your deployment name>
-
-# Local, via Ollama
-AI_BASE_URL=http://localhost:11434/v1
-AI_MODEL=hermes3:8b
-AI_API_KEY=ollama
-
-# OpenRouter — Hermes 4, Llama, anything
-AI_BASE_URL=https://openrouter.ai/api/v1
-AI_MODEL=nousresearch/hermes-4-70b
+OPENAI_API_KEY=sk-...
+OPENAI_MODEL=gpt-5-mini
+OPENAI_FAST_MODEL=
+OPENAI_EXECUTIVE_MODEL=
+OPENAI_BRIEFING_MODEL=
+OPENAI_BACKGROUND_MODEL=
+OPENAI_REASONING_EFFORT=minimal
+OPENAI_MONTHLY_BUDGET_USD=5
+OPENAI_INTERACTIVE_BUDGET_USD=
+OPENAI_BRIEFING_BUDGET_USD=
+OPENAI_BACKGROUND_BUDGET_USD=0
+HERMES_RESPONSE_MODES=false
 ```
 
-Restart the API and check `GET /api/setup` — the `ai` block reports what is loaded, and
-`GET /api/assistant/status` performs a live reachability check against the model.
+Create the key at https://platform.openai.com/api-keys and keep it on the API server. Never expose it through a `VITE_` environment variable, browser code, example file, log, or commit.
 
-**Anthropic is not implemented.** `AI_PROVIDER=anthropic` throws a clear error rather than
-failing mysteriously. Their API is not OpenAI-shaped, so it needs a real adapter in
-`src/ai/anthropicProvider.ts` implementing the same `AIProvider` interface. Roughly half a
-day including tool-call translation and prompt caching.
+Role-specific models inherit `OPENAI_MODEL` when blank, so existing installations behave exactly as before. The background budget defaults to zero and there is no background runner yet. `HERMES_RESPONSE_MODES=false` preserves the existing 800-token chat and 500-token briefing ceilings while the new policies are evaluated.
 
-### After switching models, check these
+Each turn receives a compact response contract for its selected mode. The contract controls answer shape and typical length only; it cannot grant tools, lower risk, or approve an action. Adaptive token limits remain disabled by default until model-backed evaluation demonstrates a quality and cost benefit.
 
-A different model will behave differently. In rough order of likelihood:
+Restart the API after changing configuration. `GET /api/setup` reports the effective role policy, and `GET /api/assistant/status` checks the executive/default model available to the account.
 
-| Symptom | Where to look |
-|---|---|
-| Answers too long or using markdown | `soul.md`, and the closing instruction in `formatToolResult` |
-| Wrong tool chosen | Tool `description` fields in `agent/tools/*.tools.ts` |
-| Not calling tools at all | `temperature` and `tool_choice` in `orchestrator.ts` |
-| Leaking internals | `agent/sanitise.ts` — add the pattern |
-| Claiming actions it did not take | `agent/guards.ts` — already blocks this, but widen `ACTION_CLAIMS` |
-| Costs above forecast | `ai/cost.ts` — add the model's published rate to `RATES` |
+Hermes still uses Chat Completions. The installed SDK supports the Responses API, but that migration is deliberately separate so tool calling, usage accounting, cancellation and approval behaviour can be parity-tested first. OpenAI currently recommends Responses for reasoning and multi-turn tool workflows; see the [official Responses API reference](https://developers.openai.com/api/reference/cli/resources/responses/methods/create).
 
-**Add the new model to `RATES` in `ai/cost.ts` before going live.** An unpriced model is
-billed at the highest known rate as a safety measure, which will make your spend meter wrong.
+## Phase 1 policy layer
 
----
+Every model call now has an internal response mode and model role. Modes choose presentation policy and a completion ceiling. Roles choose the configured model, reasoning effort and budget category. Neither can grant a tool, change a risk level or bypass approval.
 
-## The path of a question
+Current roles are `fast`, `executive`, `briefing` and reserved `background`. Current response modes are direct, executive, draft, action preview/result, error, sensitive and briefing. These names are internal and are not shown in normal Director-facing replies.
 
-```
-message
-  │
-  ├─ 1. checkCapability()      guards.ts     asked for something we cannot do? refuse now
-  │
-  ├─ 2. observeFromMessage()   learning.ts   did she state a preference? note it (regex only)
-  │
-  ├─ 3. tryFastPath()          fastpath.ts   a known question? answer from data, 0ms, no model
-  │
-  ├─ 4. recall()               memory/       what do we know that is relevant?
-  │
-  ├─ 5. systemPrompt()         prompt.ts     soul + memory + selected skills + trust rules
-  │
-  ├─ 6. loop, max 6 iterations orchestrator
-  │      ├─ assertWithinBudget()             refuse if the month's cap is spent
-  │      ├─ provider.chat()                  the only place a vendor is named
-  │      ├─ executeTool()      registry.ts   validate args against zod, then run
-  │      └─ formatToolResult() prompt.ts     wrap results as untrusted DATA
-  │
-  ├─ 7. checkClaims()          guards.ts     block "I sent it" when nothing was sent
-  ├─ 8. sanitiseReply()        sanitise.ts   strip ids, tool names, markdown, padding
-  └─ 9. appendMessage()        conversations persist the turn
-```
+## Request path
 
-Steps 1, 3, 7 and 8 are **enforcement, not instruction**. They exist because asking a model
-nicely is not a control. Every one of them was added after a real failure — see the comments
-in those files for what went wrong.
+1. `tryFastPath()` answers deterministic questions without spending API credits.
+2. Relevant approved memories and Microsoft 365 tool definitions are added to the prompt.
+3. A deterministic response policy and purpose-based model policy are selected.
+4. The bounded orchestrator calls OpenAI and validates every requested tool.
+5. Read operations execute immediately. Changes resolve their exact target and create a complete, expiring preview.
+6. The preview is persisted with the chat and remains an interactive card after a page refresh.
+7. A standalone, unambiguous approval atomically executes the saved action once; a rejection cancels it.
+8. Any intervening message supersedes the pending action, and only one action may be pending in a conversation.
+9. `checkClaims()` blocks claims of actions that were not actually performed.
+10. The sanitized answer, usage attribution and privacy-safe telemetry are persisted.
 
----
+The model never constructs Microsoft Graph requests. It can only select registered tools whose arguments are validated before execution. Model-written confirmation language is rejected unless a real executable approval exists. External email content is treated as untrusted data, never as instruction.
 
-## Adding a tool
+After approval, a confirmed Microsoft 365 result is reported independently of approval-audit persistence. If Microsoft Graph returns an ambiguous transport failure, the assistant reports that the outcome is unconfirmed and asks the Director to check Outlook before retrying, preventing accidental duplicates.
 
-One file, one object. `agent/tools/mail.tools.ts` is the fullest example.
+## Executive intelligence
 
-```ts
-export const myTool = defineTool({
-  name: 'calendar_find_slots',
-  description: 'Plain English. The model reads this to decide when to call it.',
-  riskLevel: 0,              // 0 read · 1 private write · 2 external · 3 destructive
-  capability: 'calendar_read', // must be enabled in config/graphScopes.ts
-  schema: z.object({ ... }),   // arguments are rejected unless they validate
-  parameters: objectSchema({ ... }), // JSON Schema shown to the model
-  summarise: (a) => 'Looked for free time',  // shown to her; never include content
-  async execute(args, ctx) { ... },
-});
-```
+Inbox triage retains its original deterministic score and adds separately reported evidence signals for current requests, unanswered questions, decisions, exact stated deadlines, consequences, impact categories, suspicious content, and uninspected attachments. Quoted email history is excluded from current-request extraction. No relative or vague deadline becomes a precise date.
 
-Then add it to the array at the bottom of the file, and to a skill's `tools` list in
-`agent/skills.ts` so it is actually offered for relevant questions.
+`mail_read` retrieves a bounded thread chronology and reports whether the latest verified message leaves the Director owing a reply or waiting on someone else. Dashboard and briefing inputs use the same typed assessment rather than asking the writing model to rediscover facts from prose.
 
-**Risk levels above 0 are refused** until the approval engine exists — see `registry.ts`.
-That is deliberate: a tool that can change things must not be reachable before there is a
-confirmation step in front of it.
+Calendar reads report event overlaps. Calendar mutation previews verify conflicts without changing the requested time. The read-only availability tool intersects Microsoft Graph free/busy data for the Director and exact directory-resolved attendees inside Outlook working hours; it never creates a meeting or sends invitations.
 
-**Keep results small.** Tool output is re-read by the model on every subsequent iteration.
-Return digested facts, not raw records.
+## Durable memory
 
----
+Before each non-fast-path model turn, a deterministic context assembler selects the immediate exchange and relevant older messages from the stored conversation. It is bounded to 16 messages and 12,000 characters, and includes at most six sanitised workflow summaries. Prepared actions are explicitly labelled unexecuted. Pending action authority still comes only from the approval store, never conversation prose.
 
-## Costs
+Context telemetry records candidate count, selected count, estimated tokens, and fact count without logging message content.
 
-Every call is priced and recorded in `ai_usage`. Watch it at `GET /api/setup` → `spend`.
+Durable memory is opt-in and approval-gated. A clear standalone instruction such as `I prefer concise, structured reports` is parsed deterministically and immediately creates a review card; it does not depend on the model noticing the preference. Selecting **Yes, remember this** stores the memory in Supabase, after which relevant active memories are added to future prompts. Selecting **No** leaves memory unchanged.
 
-- `AI_MONTHLY_BUDGET_USD` is a **hard stop**, not a warning. Past it, model calls are refused.
-- Hitting the cap **degrades rather than breaks**: the fast paths keep working at full speed.
-- Set it to `0` to disable the cap entirely.
+Active memories are selected by scope and specificity. Global and operational rules remain eligible; person, project, email, calendar, and communication rules require matching context. Temporary entries expire out of retrieval but remain visible. Equal-scope opposing rules are withheld and shown as conflicts. The database-free fallback is user-scoped.
 
-The stable prompt prefix (soul + skills + tools) is cached by the provider automatically,
-billing at roughly a tenth of normal. Keep `soul.md` under ~400 words: every word is re-read
-on every iteration of every turn.
+The assistant may observe repeated patterns as proposed memories, but proposals do not influence answers until the Director approves them. One-off email contents, calendar details, temporary plans and inferred opinions are not saved as durable facts. Duplicate active memories are ignored, and forgetting a memory also requires a preview and approval.
 
----
+## Costs and attribution
 
-## Why so much is deterministic
+Every model call is recorded in `ai_usage` with request, conversation, workflow, model role, response mode, purpose, iteration, token counts, cost and duration. `OPENAI_MONTHLY_BUDGET_USD` remains the global hard stop; set it to `0` only if you intentionally want no global application cap. Optional interactive and briefing caps sit below it. Background model calls are disabled by a zero category budget until explicitly configured.
 
-Roughly 80% of the value here never touches a model:
+Unknown models use the highest configured rate until their current published rate is added to `apps/api/src/ai/cost.ts`. Apply migrations through `0012_proactive_user_binding.sql` before relying on category attribution, scoped-memory metadata, or proactive notices.
 
-| Job | Where | Why not the model |
-|---|---|---|
-| Ranking what matters | `mail/triage.ts` | Queries cannot be confidently wrong |
-| Follow-up detection | `mail/triage.ts` | Comparing sent against received is arithmetic |
-| Phishing detection | `mail/suspicion.ts` | A small model summarised attacks neutrally |
-| Common answers | `agent/fastpath.ts` | 0ms instead of 75s, and always accurate |
-| Preference detection | `memory/learning.ts` | Regex cannot invent a preference she never stated |
+The proactive engine is deterministic and consumes no model budget. It can notify or recommend in the app, but it cannot call a mutating tool. Background reads are separately opt-in; see `docs/PROACTIVE.md`.
 
-The model's job is judgement and phrasing on the questions that genuinely need it. Everything
-a rule can do, a rule does.
+## Observability
 
----
+The HTTP request ID and a separate workflow ID correlate assistant requests, model iterations, tool calls, approval lifecycle events, memory retrieval/proposals, security blocks and briefing generation. Telemetry is runtime-allowlisted. It never accepts message bodies, tool arguments, previews, tokens or arbitrary payload objects. See `docs/OBSERVABILITY.md`.
 
-## Debugging
+## Behavioural evaluation
+
+Run `npm run eval:behaviour` to execute the 128-response Phase 2 humanisation corpus and its ten negative controls. This deterministic gate covers mechanically testable style, evidence and approval requirements without spending model budget. See `docs/BEHAVIOURAL_EVALS.md` for its limits and interpretation.
+
+## Development
 
 ```bash
-npm run test:agent     # full chain against fixture mail — no Microsoft needed
+npm run test
+npm run eval:behaviour
+npm run typecheck
+npm run test:agent
+npm run test:graph
 LOG_LEVEL=debug npm run dev:api
 ```
 
-`DEMO_MODE=true` in `.env` serves a fixture mailbox with a planted phishing email, so the
-whole loop can be exercised without a Microsoft connection. It is refused in production and
-shows a banner in the UI.
+`DEMO_MODE=true` uses fixture mailbox data but still uses the configured OpenAI model for questions that do not have a deterministic fast path.
 
-Useful log lines: `Answered without the model`, `Blocked an unbacked action claim`,
-`Preference proposed`, `Tool executed`, `Refused: capability not enabled`.
+`npm run test:graph` is deliberately read-only. It validates the granted scopes and checks profile, mail, folders, calendar, contacts, relevant people, directory, mailbox settings and To Do without changing Microsoft 365 data.

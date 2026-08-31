@@ -3,6 +3,7 @@ import { defineTool, objectSchema, type Tool } from './types.js';
 import { needsAttention, findFollowUps } from '../../mail/triage.js';
 import { assessSuspicion } from '../../mail/suspicion.js';
 import { looksAutomated } from '../../mail/triage.js';
+import { analyseMail, analyseThread } from '../../mail/executive.js';
 
 /**
  * Mail tools. All read-only (risk 0) at this stage.
@@ -44,7 +45,19 @@ const needsAttentionTool = defineTool({
           receivedAt: m.receivedAt,
           unread: !m.isRead,
           external: m.isExternal,
+          priorityScore: m.score,
+          deterministicScore: m.deterministicScore,
+          executiveAdjustment: m.executiveAdjustment,
           whyItMatters: m.reasons,
+          request: m.executive.request,
+          decisionRequired: m.executive.decisionRequired,
+          statedDeadline: m.executive.deadline ?? { stated: false, note: 'There is no stated deadline in the available message preview.' },
+          consequence: m.executive.consequence,
+          impacts: m.executive.impacts,
+          recommendedNextStep: m.executive.recommendation,
+          attachmentStatus: m.executive.attachments === 'present'
+            ? 'An attachment is present but has not been inspected.'
+            : 'No attachment is indicated.',
           preview: m.bodyPreview.slice(0, 220),
         };
       }),
@@ -176,6 +189,20 @@ const readTool = defineTool({
 
     // Detected in code, not left to the model to notice.
     const suspicion = assessSuspicion([m.subject, m.body].join(' '), m.from?.address);
+    const analysis = analyseMail({
+      subject: m.subject,
+      text: m.body,
+      hasAttachments: m.hasAttachments,
+      suspicious: suspicion.suspicious,
+    });
+    const threadMessages = m.conversationId
+      ? await ctx.mail.thread(m.conversationId, 20).catch(() => [])
+      : [];
+    const thread = analyseThread(threadMessages.length ? threadMessages : [m], ctx.me, {
+      id: m.id,
+      body: m.body,
+      suspicious: suspicion.suspicious,
+    });
 
     return {
       found: true,
@@ -185,6 +212,14 @@ const readTool = defineTool({
       subject: m.subject,
       receivedAt: m.receivedAt,
       external: m.isExternal,
+      attachmentStatus: m.hasAttachments
+        ? 'An attachment is present but has not been inspected.'
+        : 'No attachment is indicated.',
+      executiveAnalysis: {
+        ...analysis,
+        statedDeadline: analysis.deadline ?? { stated: false, note: 'There is no stated deadline in this message.' },
+      },
+      threadContext: thread,
       // Flagged so the prompt layer wraps it as untrusted content.
       untrustedBody: m.body.slice(0, 6000),
     };

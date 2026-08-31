@@ -25,7 +25,7 @@ export async function issueSession(reply: FastifyReply, userId: string): Promise
   reply.setCookie(SESSION_COOKIE, token, {
     httpOnly: true,
     secure: isProd,
-    sameSite: 'lax',
+    sameSite: env.COOKIE_SAME_SITE,
     path: '/',
     expires: expiresAt,
     signed: true,
@@ -40,7 +40,11 @@ export async function clearSession(request: FastifyRequest, reply: FastifyReply)
       await authStore().deleteSession(hashToken(unsigned.value));
     }
   }
-  reply.clearCookie(SESSION_COOKIE, { path: '/' });
+  reply.clearCookie(SESSION_COOKIE, {
+    path: '/',
+    secure: isProd,
+    sameSite: env.COOKIE_SAME_SITE,
+  });
 }
 
 /** Resolve the signed-in user, or null. Never throws. */

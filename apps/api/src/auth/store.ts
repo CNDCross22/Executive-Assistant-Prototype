@@ -42,6 +42,7 @@ export interface AuthStore {
 
   saveConnection(c: StoredConnection, refreshTokenPlain?: string): Promise<void>;
   getConnection(userId: string): Promise<StoredConnection | null>;
+  listConnectedUsers(): Promise<Array<{ user: StoredUser; connection: StoredConnection }>>;
   markNeedsReauth(userId: string): Promise<void>;
 }
 
@@ -94,6 +95,15 @@ class MemoryAuthStore implements AuthStore {
 
   async getConnection(userId: string) {
     return this.connections.get(userId) ?? null;
+  }
+
+  async listConnectedUsers() {
+    const result: Array<{ user: StoredUser; connection: StoredConnection }> = [];
+    for (const connection of this.connections.values()) {
+      const user = this.users.get(connection.userId);
+      if (user && connection.status === 'connected') result.push({ user, connection: { ...connection } });
+    }
+    return result;
   }
 
   async markNeedsReauth(userId: string) {
@@ -197,6 +207,20 @@ class PostgresAuthStore implements AuthStore {
       scopes: r.scopes,
       status: r.status === 'connected' ? 'connected' : 'needs_reauth',
     };
+  }
+
+  async listConnectedUsers(): Promise<Array<{ user: StoredUser; connection: StoredConnection }>> {
+    const db = requireDb();
+    const rows = await db<Array<{
+      id: string; ms_user_id: string; email: string; display_name: string; job_title: string | null; timezone: string;
+      home_account_id: string; scopes: string[];
+    }>>`select u.id,u.ms_user_id,u.email,u.display_name,u.job_title,u.timezone,c.home_account_id,c.scopes
+      from users u join oauth_connections c on c.user_id=u.id
+      where u.is_active and c.provider='microsoft' and c.status='connected'`;
+    return rows.map((row) => ({
+      user: { id: row.id, msUserId: row.ms_user_id, email: row.email, displayName: row.display_name, jobTitle: row.job_title, timezone: row.timezone },
+      connection: { userId: row.id, homeAccountId: row.home_account_id, scopes: row.scopes, status: 'connected' },
+    }));
   }
 
   async markNeedsReauth(userId: string) {

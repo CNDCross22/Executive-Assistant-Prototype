@@ -11,16 +11,34 @@
 import { test, describe } from 'node:test';
 import assert from 'node:assert/strict';
 
-import { checkCapability, checkClaims } from '../agent/guards.js';
+import {
+  checkCapability,
+  checkClaims,
+  isActionRequest,
+  isApprovalRevisionRequest,
+  isDurableMemoryStatement,
+  looksLikeApprovalPrompt,
+  looksLikeInternalProcess,
+} from '../agent/guards.js';
 import { assessSuspicion } from '../mail/suspicion.js';
 import { sanitiseReply } from '../agent/sanitise.js';
-import { toIana, isValidTimeZone, formatInZone } from '../lib/timezone.js';
+import { toIana, toWindows, isValidTimeZone, formatInZone } from '../lib/timezone.js';
 import { RefTable } from '../agent/refs.js';
 import { scoreMessage, looksAutomated, type TriageContext } from '../mail/triage.js';
 import { selectSkills, toolsForSkills } from '../agent/skills.js';
 import { costMicros } from '../ai/cost.js';
+import { tokenLimitOptions } from '../ai/openai.js';
 import { toAppError, isUuid, Errors } from '../lib/errors.js';
+import { safeRequestUrl } from '../lib/logger.js';
+import { normaliseApprovalPayload, parseApprovalDecision, requiresApproval } from '../agent/approvals.js';
+import { formatToolResult } from '../agent/prompt.js';
+import { soulBlock, soulStatus } from '../agent/soul.js';
 import type { MailMessage } from '../graph/mail.service.js';
+import { availableTools } from '../agent/registry.js';
+import { normaliseSteps, normaliseStoredApproval } from '../conversations/store.js';
+import { formatCalendarRange } from '../agent/tools/office.tools.js';
+import { organisationDirectoryMatches } from '../graph/user.service.js';
+import { parseExplicitMemory } from '../memory/explicit.js';
 
 // ---------------------------------------------------------------- helpers ---
 
@@ -34,6 +52,7 @@ function mail(p: Partial<MailMessage> = {}): MailMessage {
     from: { name: 'Someone', address: 'someone@outside.com' },
     toRecipients: [{ name: 'Director', address: ME }],
     ccRecipients: [],
+    bccRecipients: [],
     receivedAt: new Date().toISOString(),
     sentAt: new Date().toISOString(),
     isRead: false,
@@ -54,8 +73,8 @@ const ctx: TriageContext = {
 
 // ------------------------------------------------------- capability guard ---
 
-describe('capability guard — refuses before the model can agree', () => {
-  const mustRefuse = [
+describe('capability guard — implemented Microsoft 365 actions reach safe tools', () => {
+  const supported = [
     'Can you handle the reminders for these things on my calendar?',
     'Add a reminder to sign the contract',
     'Can you set reminders for these?',
@@ -67,12 +86,9 @@ describe('capability guard — refuses before the model can agree', () => {
     'Please schedule a meeting with Sarah',
   ];
 
-  for (const q of mustRefuse) {
-    test(`refuses: "${q}"`, () => {
-      const result = checkCapability(q);
-      assert.ok(result, 'should have been refused');
-      assert.match(result.reply, /cannot/i);
-      assert.equal(result.steps.length, 0, 'a refusal must not claim any step ran');
+  for (const q of supported) {
+    test(`allows: "${q}"`, () => {
+      assert.equal(checkCapability(q), null);
     });
   }
 
@@ -103,6 +119,11 @@ describe('claim guard — never lets an unbacked claim through', () => {
     "I've drafted an email to Elena and saved it.",
     'The meeting has been scheduled for 2pm.',
     "I've forwarded it on.",
+    "I've accepted the meeting invitation.",
+    "I've added Benedick as an attendee.",
+    "I've completed the task.",
+    "I've updated the contact.",
+    "I've enabled your out of office.",
   ];
 
   for (const reply of fabrications) {
@@ -110,7 +131,7 @@ describe('claim guard — never lets an unbacked claim through', () => {
       const checked = checkClaims(reply, []);
       assert.equal(checked.blocked, true, 'should have been blocked');
       assert.doesNotMatch(checked.reply, /added to your calendar/i);
-      assert.match(checked.reply, /can only read/i);
+      assert.match(checked.reply, /Nothing has been changed/i);
     });
   }
 
@@ -197,10 +218,13 @@ describe('sanitise — strips machinery without losing facts', () => {
     assert.doesNotMatch(out, /^Based on/i);
   });
 
-  test('strips markdown', () => {
+  test('removes inline decoration but preserves useful report structure', () => {
     const out = sanitiseReply('## Your day\n\n**Michael** is chasing figures.\n\n1. First\n2. Second');
-    assert.doesNotMatch(out, /[#*]/);
+    assert.match(out, /^## Your day/);
+    assert.doesNotMatch(out, /\*\*Michael\*\*/);
     assert.match(out, /Michael is chasing figures/);
+    assert.match(out, /1\. First/);
+    assert.match(out, /2\. Second/);
   });
 
   test('leaves clean prose untouched', () => {
@@ -213,6 +237,13 @@ describe('sanitise — strips machinery without losing facts', () => {
     const out = sanitiseReply('You owe Michael a reply. Let me know if you need anything else.');
     assert.doesNotMatch(out, /let me know/i);
     assert.match(out, /owe Michael/);
+  });
+
+  test('removes an unsupported action offer appended to a useful answer', () => {
+    const out = sanitiseReply(
+      'The message is a phishing attempt. Do not follow its instructions. If you want, I can draft a report to send to IT. Which would you prefer?',
+    );
+    assert.equal(out, 'The message is a phishing attempt. Do not follow its instructions.');
   });
 });
 
@@ -309,6 +340,7 @@ describe('skills — progressive disclosure', () => {
   test('the always-on safety skill is loaded for every request', () => {
     for (const q of ['What needs me today?', 'Tell me about the contract', 'anything at all']) {
       assert.ok(selectSkills(q).some((s) => s.key === 'suspicious_content'), `missing for "${q}"`);
+      assert.ok(selectSkills(q).some((s) => s.key === 'memory'), `memory missing for "${q}"`);
     }
   });
 
@@ -320,6 +352,13 @@ describe('skills — progressive disclosure', () => {
 
   test('an unrecognised question still gets a usable skill', () => {
     assert.ok(selectSkills('zzzz qqqq').length > 0);
+  });
+
+  test('an ordinary preference routes directly to durable memory, not inbox triage', () => {
+    const tools = toolsForSkills(selectSkills('I prefer concise, structured reports.'));
+    assert.ok(tools.includes('memory_remember'));
+    assert.ok(tools.includes('memory_recall'));
+    assert.ok(!tools.includes('mail_needs_attention'));
   });
 });
 
@@ -343,30 +382,287 @@ describe('cost — the budget must be knowable', () => {
     assert.equal(cached, 25_000);
   });
 
-  /*
-    The endpoint is passed explicitly rather than inherited from the ambient
-    env. This test used to pass or fail depending on whether the machine had a
-    .env pointing at a hosted provider — on a clean checkout it read the
-    default Ollama URL, priced the unknown model as free, and failed.
-  */
-  const HOSTED = 'https://api.openai.com/v1';
-
-  test('an unknown hosted model is priced pessimistically, never as free', () => {
-    const micros = costMicros(
-      'some-new-model',
-      { promptTokens: 1_000_000, completionTokens: 1_000_000 },
-      HOSTED,
-    );
-    assert.ok(micros > 0, 'an unpriced model must never look free');
+  test('prices dated OpenAI snapshots at their stable alias rate', () => {
+    const usage = { promptTokens: 1_000_000, completionTokens: 1_000_000 };
+    assert.equal(costMicros('gpt-5-mini-2025-08-07', usage), costMicros('gpt-5-mini', usage));
   });
 
-  test('an unknown model on a local endpoint is free', () => {
-    const micros = costMicros(
-      'some-new-model',
-      { promptTokens: 1_000_000, completionTokens: 1_000_000 },
-      'http://localhost:11434/v1',
+  test('an unknown OpenAI model is priced pessimistically, never as free', () => {
+    const micros = costMicros('some-new-model', {
+      promptTokens: 1_000_000,
+      completionTokens: 1_000_000,
+    });
+    assert.ok(micros > 0, 'an unpriced model must never look free');
+  });
+});
+
+describe('OpenAI request compatibility', () => {
+  test('GPT-5 uses max_completion_tokens and its default temperature', () => {
+    assert.deepEqual(tokenLimitOptions('gpt-5-mini', 500, 0.3), {
+      max_completion_tokens: 500,
+      reasoning_effort: 'minimal',
+    });
+  });
+
+  test('older chat models retain legacy token and temperature fields', () => {
+    assert.deepEqual(tokenLimitOptions('gpt-4o-mini', 500, 0.3), {
+      max_tokens: 500,
+      temperature: 0.3,
+    });
+  });
+});
+
+describe('request logging', () => {
+  test('strips OAuth codes and other query data from logged URLs', () => {
+    assert.equal(
+      safeRequestUrl('/api/auth/callback?code=secret&state=also-secret'),
+      '/api/auth/callback',
     );
-    assert.equal(micros, 0, 'a locally hosted model costs nothing to run');
+    assert.equal(safeRequestUrl('/api/health'), '/api/health');
+  });
+});
+
+describe('conversation history compatibility', () => {
+  const step = { tool: 'mail_read', summary: 'Read a message', status: 'success' };
+
+  test('accepts current arrays and legacy JSON strings', () => {
+    assert.deepEqual(normaliseSteps([step]), [step]);
+    assert.deepEqual(normaliseSteps(JSON.stringify([step])), [step]);
+  });
+
+  test('accepts a legacy wrapper and rejects malformed history safely', () => {
+    assert.deepEqual(normaliseSteps({ steps: [step] }), [step]);
+    assert.deepEqual(normaliseSteps({}), []);
+    assert.deepEqual(normaliseSteps('not-json'), []);
+    assert.deepEqual(normaliseSteps(null), []);
+  });
+
+  test('restores only valid approval cards after a page refresh', () => {
+    const approval = {
+      id: 'approval-id',
+      expiresAt: '2026-08-29T09:15:00.000Z',
+      preview: { title: 'Update event?', summary: 'Melbourne Opera', details: [{ label: 'Add attendee', value: 'benedick@aretecare.com.au' }] },
+    };
+    assert.deepEqual(normaliseStoredApproval(approval), approval);
+    assert.equal(normaliseStoredApproval({ id: 'missing-preview' }), undefined);
+  });
+});
+
+describe('calendar preview readability', () => {
+  test('formats Graph date-times as a natural Director-facing range', () => {
+    assert.equal(
+      formatCalendarRange('2026-08-29T09:00:00', '2026-08-29T11:00:00', 'Australia/Sydney'),
+      'Saturday, 29 August 2026 · 9:00 am–11:00 am',
+    );
+  });
+});
+
+describe('action approval policy', () => {
+  test('only read-only tools can run without confirmation', () => {
+    assert.equal(requiresApproval(0), false);
+    assert.equal(requiresApproval(1), true);
+    assert.equal(requiresApproval(2), true);
+    assert.equal(requiresApproval(3), true);
+  });
+
+  test('every mutating Microsoft 365 tool has a human-readable preview', () => {
+    const writes = availableTools().filter((tool) => tool.riskLevel > 0);
+    assert.ok(writes.length >= 15, 'the Microsoft 365 write surface should be registered');
+    for (const tool of writes) assert.equal(typeof tool.preview, 'function', `${tool.name} has no preview`);
+  });
+
+  test('action requests receive the matching tool family', () => {
+    const toolNames = (message: string) => toolsForSkills(selectSkills(message));
+    assert.ok(toolNames('Send an email to the board').includes('mail_send'));
+    assert.ok(toolNames('Book a calendar meeting tomorrow').includes('calendar_create'));
+    assert.ok(toolNames('When are Sarah and I both free next week?').includes('calendar_find_slots'));
+    assert.ok(toolNames('Add this to my task list').includes('task_create'));
+    assert.ok(toolNames('Turn on my out of office').includes('mailbox_settings_update'));
+    assert.ok(toolNames('Add Priya to my contacts').includes('contact_create'));
+    const attendeeTools = toolNames('We need to edit the Melbourne Opera. Add Benedick Gabis on the attendees.');
+    assert.ok(attendeeTools.includes('calendar_list'));
+    assert.ok(attendeeTools.includes('calendar_update'));
+    assert.ok(attendeeTools.includes('directory_search'));
+    assert.ok(!attendeeTools.includes('people_search'));
+    assert.ok(!attendeeTools.includes('contacts_search'));
+    assert.ok(!attendeeTools.includes('mail_needs_attention'));
+  });
+
+  test('attendee resolution rejects external and example-domain people', () => {
+    const matches = organisationDirectoryMatches([
+      { name: 'Benedick Gabis', email: 'benedick.gabis@example.com', jobTitle: null },
+      { name: 'Benedick Gabis', email: 'benedick@aretecare.com.au', jobTitle: 'Director' },
+      { name: 'Another Person', email: 'another@aretecare.com.au', jobTitle: null },
+    ], 'Benedick Gabis', 'aretecare.com.au');
+    assert.deepEqual(matches.map((person) => person.email), ['benedick@aretecare.com.au']);
+  });
+
+  test('directory people can be resolved by their exact organisation email', () => {
+    const matches = organisationDirectoryMatches([
+      { name: 'Benedick Gabis', email: 'benedick@aretecare.com.au', jobTitle: 'Director' },
+      { name: 'Benedict Other', email: 'benedict.other@aretecare.com.au', jobTitle: null },
+    ], 'benedick@aretecare.com.au', 'aretecare.com.au');
+    assert.deepEqual(matches.map((person) => person.email), ['benedick@aretecare.com.au']);
+  });
+
+  test('detects mutation requests that must never receive a model-written preview', () => {
+    const mutations = [
+      'Draft an email to the board', 'Send an email to the board', 'Reply to Michael',
+      'Forward this message to Priya', 'Mark this email as read', 'Flag this message',
+      'Archive this email', 'Delete that email', 'Turn on my out of office',
+      'Create a calendar event', 'Update the Melbourne Opera calendar event',
+      'Add benedick@aretecare.com.au as an attendee to Melbourne Opera',
+      'I want to add a note as well. Add be on time.',
+      'Accept the meeting invitation', 'Decline the calendar meeting',
+      'Add Priya as a contact', 'Update this contact', 'Delete that contact',
+      'Create a task', 'Complete this task', 'Delete that reminder',
+      'Remember that I prefer morning meetings', 'Forget that preference',
+    ];
+    for (const request of mutations) assert.equal(isActionRequest(request), true, request);
+    assert.equal(isActionRequest('What is on my calendar tomorrow?'), false);
+    assert.equal(isActionRequest('Who emailed me today?'), false);
+  });
+
+  test('recognises explicit durable preferences on their first statement', () => {
+    const statements = [
+      'Remember that I prefer concise reports.',
+      'From now on, keep my email drafts warm but brief.',
+      'My preference is to protect Friday afternoons.',
+      'I want you to always show a preview.',
+      'Never book meetings before 9 am.',
+    ];
+    for (const statement of statements) {
+      assert.equal(isDurableMemoryStatement(statement), true, statement);
+      assert.equal(isActionRequest(statement), true, statement);
+    }
+    assert.equal(isDurableMemoryStatement('Add a note to the Melbourne Opera event.'), false);
+  });
+
+  test('builds a deterministic memory proposal without using the model', () => {
+    assert.deepEqual(parseExplicitMemory('I prefer concise, structured reports.'), {
+      type: 'preference',
+      title: 'Prefers concise, structured reports',
+      content: 'The Director prefers concise, structured reports.',
+      key: 'preference.concise.structured.reports',
+      importance: 3,
+      scope: 'global',
+    });
+    const rule = parseExplicitMemory('From now on, always show me a preview.');
+    assert.equal(rule?.type, 'operational');
+    assert.equal(rule?.content, 'Always show me a preview.');
+    assert.equal(parseExplicitMemory('Please add a note to the Melbourne Opera event.'), null);
+  });
+
+  test('detects fake confirmation text even when the mutation wording was missed', () => {
+    assert.equal(looksLikeApprovalPrompt('Please reply Yes to proceed or No to cancel.'), true);
+    assert.equal(looksLikeApprovalPrompt('This needs your explicit approval.'), true);
+    assert.equal(looksLikeApprovalPrompt('Would you like me to proceed?'), true);
+    assert.equal(looksLikeApprovalPrompt('Do you want me to proceed to that step now so the system shows the confirmation card?'), true);
+    assert.equal(looksLikeApprovalPrompt('The email asks you to review the figures.'), false);
+  });
+
+  test('recognises natural amendments to a pending proposal', () => {
+    assert.equal(isApprovalRevisionRequest('Actually make it 6 pm.'), true);
+    assert.equal(isApprovalRevisionRequest('I want to add a note as well.'), true);
+    assert.equal(isApprovalRevisionRequest('Use Benedick instead.'), true);
+    assert.equal(isApprovalRevisionRequest("Let's do it again."), true);
+    assert.equal(isApprovalRevisionRequest('Try again.'), true);
+    assert.equal(isApprovalRevisionRequest('What is on my calendar tomorrow?'), false);
+  });
+
+  test('blocks internal workflow narration from Director-facing replies', () => {
+    assert.equal(looksLikeInternalProcess('I must use the calendar write tool first.'), true);
+    assert.equal(looksLikeInternalProcess('The system shows the confirmation card next.'), true);
+    assert.equal(looksLikeInternalProcess('I found the Melbourne Opera event.'), false);
+  });
+
+  test('a vague calendar revision inherits recent calendar context instead of inbox triage', () => {
+    const skillQuery = [
+      'I want to add a note as well. Add be on time.',
+      'I want to add a note as well. Add be on time.',
+      'I want to add a note as well. Add be on time.',
+      'calendar_update',
+      'Update this calendar event? Melbourne Opera. Add attendee benedick@aretecare.com.au.',
+    ].join('\n');
+    const tools = toolsForSkills(selectSkills(skillQuery));
+    assert.ok(tools.includes('calendar_update'));
+    assert.ok(!tools.includes('mail_needs_attention'));
+  });
+
+  test('calendar updates accept attendee additions without replacing the event', () => {
+    const tool = availableTools().find((candidate) => candidate.name === 'calendar_update');
+    assert.ok(tool);
+    const parsed = tool.schema.safeParse({ eventRef: 'e1', addAttendees: ['benedick@aretecare.com.au'] });
+    assert.equal(parsed.success, true);
+    assert.equal(tool.schema.safeParse({ eventRef: 'e1', addAttendees: ['benedick.gabis@example.com'] }).success, false);
+  });
+
+  test('only a standalone, unambiguous response decides a pending action', () => {
+    assert.equal(parseApprovalDecision('Yes'), 'approve');
+    assert.equal(parseApprovalDecision('Yes please'), 'approve');
+    assert.equal(parseApprovalDecision('Go ahead.'), 'approve');
+    assert.equal(parseApprovalDecision('No.'), 'reject');
+    assert.equal(parseApprovalDecision('No thanks'), 'reject');
+    assert.equal(parseApprovalDecision('yes, send it'), null);
+    assert.equal(parseApprovalDecision('I think no changes are needed'), null);
+  });
+
+  test('accepts current and legacy saved approval shapes', () => {
+    const args = { subject: 'Melbourne Opera', start: '2026-08-29T09:00:00' };
+    assert.deepEqual(normaliseApprovalPayload({ toolArgs: args, refs: { e1: 'opaque-id' } }), {
+      toolArgs: args,
+      refs: { e1: 'opaque-id' },
+    });
+    assert.deepEqual(normaliseApprovalPayload(args), { toolArgs: args, refs: {} });
+    assert.deepEqual(normaliseApprovalPayload(JSON.stringify(args)), { toolArgs: args, refs: {} });
+  });
+
+  test('opaque references survive the preview and approval turns', () => {
+    const first = new RefTable();
+    assert.equal(first.ref('a-real-graph-id-that-must-never-reach-the-model'), 'e1');
+    const second = new RefTable();
+    second.restore(first.snapshot());
+    assert.equal(second.resolve('e1'), 'a-real-graph-id-that-must-never-reach-the-model');
+  });
+
+  test('Outlook receives a Windows timezone even when the assistant uses IANA', () => {
+    assert.equal(toWindows('Australia/Sydney'), 'AUS Eastern Standard Time');
+    assert.equal(toWindows('AUS Eastern Standard Time'), 'AUS Eastern Standard Time');
+  });
+
+  test('an approval preview is framed as pending rather than failed', () => {
+    const result = formatToolResult(
+      'mail_send',
+      {
+        approvalRequired: true,
+        preview: {
+          title: 'Send email',
+          summary: 'Reply to Elena',
+          details: [
+            { label: 'To', value: 'elena@example.com' },
+            { label: 'Subject', value: 'Contract renewal' },
+          ],
+        },
+      },
+      true,
+    );
+
+    assert.match(result, /has NOT been executed/);
+    assert.match(result, /Please reply Yes to proceed or No to cancel\./);
+    assert.doesNotMatch(result, /lookup failed/i);
+  });
+});
+
+describe('executive assistant soul', () => {
+  test('loads the combined humanisation and approval contract', () => {
+    const soul = soulBlock();
+    const status = soulStatus();
+
+    assert.equal(status.source, 'soul.md');
+    assert.match(soul, /Australian English/);
+    assert.match(soul, /Do not ask her to\s+rephrase/);
+    assert.match(soul, /Please reply Yes to proceed or No to cancel\./);
+    assert.doesNotMatch(soul, /Under 100 words|British English/);
   });
 });
 
@@ -409,6 +705,25 @@ describe('error mapping — nothing about the schema reaches the browser', () =>
     const mapped = toAppError(new Error('ENOENT: /home/user/.ssh/id_rsa'));
     assert.doesNotMatch(mapped.message, /ssh|ENOENT|home/i);
     assert.equal(mapped.statusCode, 500);
+  });
+
+  test('preserves an explicitly branded Hermes error after an Edge realm crossing', () => {
+    const reconstructed = {
+      name: 'AppError',
+      safeToExpose: true,
+      statusCode: 401,
+      code: 'unauthorized',
+      message: 'You are not signed in.',
+    };
+    const mapped = toAppError(reconstructed);
+    assert.equal(mapped.statusCode, 401);
+    assert.equal(mapped.code, 'unauthorized');
+  });
+
+  test('does not trust an arbitrary status-shaped error', () => {
+    const mapped = toAppError({ statusCode: 418, code: 'leak', message: 'internal detail' });
+    assert.equal(mapped.statusCode, 500);
+    assert.equal(mapped.message.includes('internal detail'), false);
   });
 
   test('uuid validation rejects the shapes that caused 500s', () => {

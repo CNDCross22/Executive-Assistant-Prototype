@@ -1,5 +1,19 @@
 # Memory
 
+## Phase 3 current behaviour
+
+Memory entries record where they apply: `global`, `person`, `project`, `communication`, `calendar`, `email`, or `operational`. A scoped entry can carry a normalised association, such as a person's address or `legal matters`. Person and project entries are selected only when the request matches that association.
+
+Specificity wins without deleting the broader rule. A detailed-email rule scoped to legal matters overrides a general short-email rule only for legal work. At equal specificity, an explicit Director statement outranks an approved observation, followed by confidence, importance, and confirmation recency.
+
+Keys are unique per user, scope, and association. Replacing an exact scoped key archives that exact predecessor and records the supersession. Broader and more specific versions coexist. Equal-scope opposing rules with different keys are identified as conflicts and both are withheld until the Director edits or removes one.
+
+Temporary language such as `this month`, `for the next 10 days`, or an ISO `until` date creates an expiry. Expired entries stay visible in Preferences but do not enter the prompt. The UI shows scope, association, source, confirmation, last use, expiry, and conflict state.
+
+The database-free fallback is separated by user ID. It is non-durable, but one user's entries cannot be listed, recalled, edited, or removed through another user's fallback collection.
+
+Conversation history is assembled separately from durable memory. Hermes selects the immediate exchange, relevant older turns, verified workflow summaries, and authoritative revision state within fixed message and character limits. A prepared action is always labelled as unexecuted. Context selection cannot approve or execute anything.
+
 How Hermes gets more useful over time — and why it never learns anything behind her back.
 
 ---
@@ -55,8 +69,8 @@ expressed.
 | `historical` | What happened | "Board pack sent 14 Aug" |
 
 `preference` and `operational` entries can carry a **`key`** (`workday.start`,
-`confirm.sending`). Keys are unique per user among active entries, so preferences can never
-contradict each other — saving a new value archives the old one rather than stacking.
+`confirm.sending`). Keys are unique per user, scope, and association among active entries.
+Saving a new value archives only the old value at the same specificity and records what it superseded.
 
 ---
 

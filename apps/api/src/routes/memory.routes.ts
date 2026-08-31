@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/session.js';
 import { isUuid, Errors } from '../lib/errors.js';
 import { isDemo } from '../config/env.js';
-import { listMemory, remember, updateMemory, forget } from '../memory/store.js';
+import { approveMemory, findMemoryConflicts, listMemory, remember, updateMemory, forget } from '../memory/store.js';
 import { pendingSignals, PROPOSAL_THRESHOLD } from '../memory/learning.js';
 
 /**
@@ -26,6 +26,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
       /** Patterns being watched but not yet worth raising. */
       watching: signals,
       proposalThreshold: PROPOSAL_THRESHOLD,
+      conflicts: findMemoryConflicts(entries),
     };
   });
 
@@ -38,6 +39,9 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
         key: z.string().max(80).optional(),
         subject: z.string().max(200).optional(),
         importance: z.number().int().min(1).max(5).optional(),
+        scope: z.enum(['global', 'person', 'project', 'communication', 'calendar', 'email', 'operational']).optional(),
+        scopeRef: z.string().max(200).nullable().optional(),
+        expiresAt: z.string().datetime().nullable().optional(),
       })
       .parse(request.body);
 
@@ -63,7 +67,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
     const { id } = z.object({ id: z.string().min(1).max(64) }).parse(request.params);
     if (isFixture(id)) return { ok: true, demo: true };
     if (!isUuid(id)) throw Errors.notFound('that memory');
-    await updateMemory(request.user!.id, id, { status: 'active' });
+    if (!(await approveMemory(request.user!.id, id))) throw Errors.notFound('that memory');
     return { ok: true };
   });
 
@@ -85,6 +89,9 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
         content: z.string().min(2).max(2000).optional(),
         importance: z.number().int().min(1).max(5).optional(),
         pinned: z.boolean().optional(),
+        scope: z.enum(['global', 'person', 'project', 'communication', 'calendar', 'email', 'operational']).optional(),
+        scopeRef: z.string().max(200).nullable().optional(),
+        expiresAt: z.string().datetime().nullable().optional(),
       })
       .parse(request.body);
 

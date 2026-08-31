@@ -1,10 +1,12 @@
 import type { FastifyInstance, FastifyRequest } from 'fastify';
 import { z } from 'zod';
 import { requireAuth, ownDomainOf } from '../auth/session.js';
-import { isDemo } from '../config/env.js';
+import { env, isDemo } from '../config/env.js';
 import { MailService } from '../graph/mail.service.js';
+import { CalendarService } from '../graph/calendar.service.js';
 import { buildDashboard } from '../dashboard/service.js';
 import { generateBriefing } from '../dashboard/briefing.js';
+import { proactiveInbox, queueProactiveScan, scanProactiveSnapshot } from '../proactive/engine.js';
 
 async function mailFor(request: FastifyRequest): Promise<MailService> {
   if (isDemo) {
@@ -34,8 +36,33 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
       data.pendingProposals = DEMO_PROPOSALS;
     }
 
+    // A dashboard refresh is also a bounded proactive scan. It only reads
+    // Microsoft 365 and writes Hermes' own in-app event state. Failure here is
+    // isolated so a notice can never make the core dashboard unavailable.
+    let proactive: Awaited<ReturnType<typeof proactiveInbox>> | null = null;
+    try {
+      proactive = await proactiveInbox(user.id, user.timezone);
+      const requestId = String(request.id);
+      queueProactiveScan(user.id, async () => {
+        const degradedSources: string[] = [];
+        const calendar = isDemo ? [] : await (async () => {
+          const now = new Date();
+          const graph = await request.graph!();
+          return new CalendarService(graph).list(now.toISOString(), new Date(now.getTime() + 48 * 3_600_000).toISOString(), 'UTC', 50)
+            .catch(() => { degradedSources.push('calendar'); return []; });
+        })();
+        await scanProactiveSnapshot({
+          user, dashboard: data, calendar, degradedSources, requestId,
+          deliveryMode: env.HERMES_PROACTIVE_DELIVERY,
+        });
+      }, (err) => request.log.warn({ err }, 'Proactive dashboard scan unavailable'));
+    } catch (err) {
+      request.log.warn({ err }, 'Proactive dashboard scan unavailable');
+    }
+
     return {
       ...data,
+      proactive,
       user: { displayName: user.displayName, firstName: user.displayName.split(' ')[0] ?? user.displayName },
     };
   });
@@ -47,6 +74,9 @@ export async function dashboardRoutes(app: FastifyInstance): Promise<void> {
     const mail = await mailFor(request);
     const data = await buildDashboard(mail, user.email.toLowerCase(), user.id);
 
-    return generateBriefing(user.id, user.displayName, data, { force: refresh === 'true' });
+    return generateBriefing(user.id, user.displayName, data, {
+      force: refresh === 'true',
+      requestId: String(request.id),
+    });
   });
 }

@@ -4,6 +4,12 @@ import { api, ApiError, type MeResponse, type StoredMessage, type ChatResponse }
 import Message, { type Turn } from '../components/Message';
 import { PREVIEWS, findPreview } from '../lib/previews';
 import { newId } from '../lib/id';
+import {
+  insertMention,
+  mentionAtCaret,
+  type DirectoryPerson,
+  type MentionQuery,
+} from '../lib/mentions';
 
 const LIVE_OPENERS = [
   'What needs me today?',
@@ -42,11 +48,54 @@ export default function Assistant({
   const [turns, setTurns] = useState<Turn[]>([]);
   const [input, setInput] = useState('');
   const [busy, setBusy] = useState(false);
+  const [mention, setMention] = useState<MentionQuery | null>(null);
+  const [people, setPeople] = useState<DirectoryPerson[]>([]);
+  const [peopleLoading, setPeopleLoading] = useState(false);
+  const [peopleError, setPeopleError] = useState(false);
+  const [activePerson, setActivePerson] = useState(0);
 
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
   const loadedFor = useRef<string | null>(null);
   const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
+
+  const mentionQuery = mention?.query ?? '';
+
+  useEffect(() => {
+    if (!mention || !mentionQuery || demo) {
+      setPeople([]);
+      setPeopleLoading(false);
+      setPeopleError(false);
+      setActivePerson(0);
+      return;
+    }
+
+    let cancelled = false;
+    const timer = window.setTimeout(() => {
+      setPeopleLoading(true);
+      setPeopleError(false);
+      void api
+        .get<{ people: DirectoryPerson[] }>(`/api/directory/search?q=${encodeURIComponent(mentionQuery)}`)
+        .then((result) => {
+          if (cancelled) return;
+          setPeople(result.people);
+          setActivePerson(0);
+        })
+        .catch(() => {
+          if (cancelled) return;
+          setPeople([]);
+          setPeopleError(true);
+        })
+        .finally(() => {
+          if (!cancelled) setPeopleLoading(false);
+        });
+    }, 220);
+
+    return () => {
+      cancelled = true;
+      window.clearTimeout(timer);
+    };
+  }, [demo, mentionQuery]);
 
   useEffect(() => {
     endRef.current?.scrollIntoView({ behavior: 'smooth', block: 'end' });
@@ -72,7 +121,8 @@ export default function Assistant({
             id: m.id,
             role: m.role,
             text: m.content,
-            steps: m.steps,
+            steps: Array.isArray(m.steps) ? m.steps : [],
+            approval: m.approval,
             model: m.model,
             durationMs: m.durationMs,
           })),
@@ -124,6 +174,7 @@ export default function Assistant({
 
     setTurns((t) => [...t, { id: newId(), role: 'user', text: trimmed }]);
     setInput('');
+    setMention(null);
     setBusy(true);
     if (inputRef.current) inputRef.current.style.height = 'auto';
 
@@ -145,6 +196,7 @@ export default function Assistant({
           steps: res.steps,
           model: res.meta.model,
           durationMs: res.meta.durationMs,
+          approval: res.approval,
         },
       ]);
       void queryClient.invalidateQueries({ queryKey: ['setup'] });
@@ -180,13 +232,29 @@ export default function Assistant({
 
   const firstName = user.displayName.split(' ')[0] ?? user.displayName;
 
+  function updateMention(value: string, caret: number | null) {
+    setMention(mentionAtCaret(value, caret ?? value.length));
+  }
+
+  function choosePerson(person: DirectoryPerson) {
+    if (!mention) return;
+    const inserted = insertMention(input, mention, person);
+    setInput(inserted.value);
+    setMention(null);
+    setPeople([]);
+    window.requestAnimationFrame(() => {
+      inputRef.current?.focus();
+      inputRef.current?.setSelectionRange(inserted.caret, inserted.caret);
+    });
+  }
+
   return (
     <>
       <div className="scroll flex-1">
         <div className="mx-auto max-w-[46rem] px-4 py-7 sm:px-6 sm:py-10">
           {turns.length === 0 ? (
             <div className="rise">
-              <p className="label mb-4">
+               <p className="label mb-4">Director's assistant · {' '}
                 {new Date().toLocaleDateString(undefined, {
                   weekday: 'long',
                   day: 'numeric',
@@ -202,17 +270,12 @@ export default function Assistant({
               </p>
 
               <p className="label mb-3">{demo ? 'See how a reply looks' : 'Try'}</p>
-              <div className="flex flex-col items-start gap-2">
+               <div className="grid max-w-[40rem] gap-2 sm:grid-cols-2">
                 {(demo ? PREVIEWS.map((p) => p.question) : LIVE_OPENERS).map((opener, i) => (
                   <button
                     key={opener}
                     className="btn btn-quiet rise text-left"
-                    style={{
-                      fontFamily: 'var(--font-body)',
-                      fontWeight: 400,
-                      padding: '9px 15px',
-                      animationDelay: `${i * 55}ms`,
-                    }}
+                    style={{ padding: '10px 15px', animationDelay: `${i * 55}ms` }}
                     onClick={() => void (demo ? playPreview(opener) : send(opener))}
                   >
                     {opener}
@@ -227,13 +290,18 @@ export default function Assistant({
               )}
             </div>
           ) : (
-            <div className="flex flex-col gap-7">
-              {turns.map((turn) => (
-                <Message key={turn.id} turn={turn} />
+            <div className="flex flex-col gap-7" aria-live="polite">
+              {turns.map((turn, index) => (
+                <Message
+                  key={turn.id}
+                  turn={turn}
+                  onDecision={(decision) => void send(decision)}
+                  decisionDisabled={busy || turns.slice(index + 1).some((later) => later.role === 'user')}
+                />
               ))}
 
               {busy && (
-                <p className="label flex items-center gap-1.5">
+                <p className="label flex items-center gap-1.5" role="status">
                   <span className="thinking-dot" />
                   <span className="thinking-dot" />
                   <span className="thinking-dot" />
@@ -249,25 +317,89 @@ export default function Assistant({
 
       <div className="shrink-0 px-4 pb-4 pt-1 sm:px-6 sm:pb-5">
         <form
-          className="composer mx-auto flex max-w-[46rem] items-end gap-2 p-2"
+          className="composer relative mx-auto flex max-w-[46rem] items-end gap-2 p-2"
           onSubmit={(e) => {
             e.preventDefault();
             void send(input);
           }}
         >
+          {mention && !demo && (
+            <div id="directory-people" className="mention-picker" role="listbox" aria-label="People in the Arete Care directory">
+              {!mentionQuery ? (
+                <p className="mention-status">Type a colleague's name</p>
+              ) : peopleLoading ? (
+                <p className="mention-status">Searching the directory&hellip;</p>
+              ) : peopleError ? (
+                <p className="mention-status mention-status-error">The directory could not be reached.</p>
+              ) : people.length === 0 ? (
+                <p className="mention-status">No matching Arete Care account</p>
+              ) : (
+                people.map((person, index) => (
+                  <button
+                    key={person.email}
+                    id={`directory-person-${index}`}
+                    className={`mention-person${index === activePerson ? ' is-active' : ''}`}
+                    type="button"
+                    role="option"
+                    aria-selected={index === activePerson}
+                    onMouseEnter={() => setActivePerson(index)}
+                    onMouseDown={(event) => event.preventDefault()}
+                    onClick={() => choosePerson(person)}
+                  >
+                    <span className="mention-avatar" aria-hidden="true">
+                      {person.name.trim().charAt(0).toUpperCase() || '?'}
+                    </span>
+                    <span className="mention-identity">
+                      <strong>{person.name}</strong>
+                      <span>{person.email}</span>
+                    </span>
+                    {person.jobTitle && <span className="mention-role">{person.jobTitle}</span>}
+                  </button>
+                ))
+              )}
+            </div>
+          )}
           <textarea
             ref={inputRef}
             rows={1}
             value={input}
             aria-label="Ask your assistant a question"
+            aria-autocomplete="list"
+            aria-expanded={Boolean(mention && !demo)}
+            aria-controls={mention && !demo ? 'directory-people' : undefined}
+            aria-activedescendant={people.length > 0 ? `directory-person-${activePerson}` : undefined}
             placeholder="Ask your assistant…"
             className="max-h-44 flex-1 resize-none bg-transparent px-3 py-2 outline-none"
             onChange={(e) => {
               setInput(e.target.value);
+              updateMention(e.target.value, e.target.selectionStart);
               e.target.style.height = 'auto';
               e.target.style.height = `${Math.min(e.target.scrollHeight, 176)}px`;
             }}
+            onSelect={(e) => updateMention(e.currentTarget.value, e.currentTarget.selectionStart)}
             onKeyDown={(e) => {
+              if (mention && people.length > 0) {
+                if (e.key === 'ArrowDown') {
+                  e.preventDefault();
+                  setActivePerson((current) => (current + 1) % people.length);
+                  return;
+                }
+                if (e.key === 'ArrowUp') {
+                  e.preventDefault();
+                  setActivePerson((current) => (current - 1 + people.length) % people.length);
+                  return;
+                }
+                if (e.key === 'Enter' || e.key === 'Tab') {
+                  e.preventDefault();
+                  choosePerson(people[activePerson]!);
+                  return;
+                }
+              }
+              if (mention && e.key === 'Escape') {
+                e.preventDefault();
+                setMention(null);
+                return;
+              }
               if (e.key === 'Enter' && !e.shiftKey) {
                 e.preventDefault();
                 void send(input);
@@ -281,7 +413,7 @@ export default function Assistant({
         <p className="label mx-auto mt-2.5 max-w-[46rem] text-center">
           {demo
             ? 'Demo mailbox · no real email is being read'
-            : 'Reads your Outlook · asks before it changes anything'}
+            : 'Reads your Outlook · shows a preview and asks before making changes'}
         </p>
       </div>
     </>

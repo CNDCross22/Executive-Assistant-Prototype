@@ -4,14 +4,22 @@ import { requireAuth, ownDomainOf } from '../auth/session.js';
 import { isDemo } from '../config/env.js';
 import { MailService } from '../graph/mail.service.js';
 import { UserService } from '../graph/user.service.js';
+import { CalendarService } from '../graph/calendar.service.js';
+import { ContactsService } from '../graph/contacts.service.js';
+import { TasksService } from '../graph/tasks.service.js';
+import { TeamsService } from '../graph/teams.service.js';
+import { FilesService } from '../graph/files.service.js';
 import { runAgent } from '../agent/orchestrator.js';
 import { RefTable } from '../agent/refs.js';
 import { sanitiseReply } from '../agent/sanitise.js';
 import { aiProvider } from '../ai/index.js';
 import { spendSummary } from '../ai/cost.js';
-import type { ChatMessage } from '../ai/provider.js';
+import type { ContextTurn } from '../agent/context.js';
 import { AppError } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
+import { createOperationContext } from '../observability/context.js';
+import { recordTelemetry } from '../observability/telemetry.js';
+import { modelPolicySummary } from '../ai/policy.js';
 import {
   listConversations,
   createConversation,
@@ -30,9 +38,7 @@ const chatSchema = z.object({
 });
 
 const idParam = z.object({ id: z.string().min(1).max(64) });
-
-/** How many prior turns to replay. Long context makes small models drift. */
-const HISTORY_TURNS = 8;
+const directoryQuery = z.object({ q: z.string().trim().min(1).max(100) });
 
 function notFound(): AppError {
   return new AppError(404, 'not_found', 'That conversation is not there.');
@@ -42,7 +48,21 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
   app.get('/api/assistant/status', { preHandler: requireAuth }, async () => {
     const provider = aiProvider();
     const [health, spend] = await Promise.all([provider.health(), spendSummary()]);
-    return { model: provider.model, provider: provider.id, ...health, spend };
+    return { model: provider.model, provider: provider.id, roles: modelPolicySummary(), ...health, spend };
+  });
+
+  // A small, read-only people picker for @mentions in the chat composer.
+  // Results are tenant-directory users filtered to the Director's own domain.
+  app.get('/api/directory/search', { preHandler: requireAuth }, async (request, reply) => {
+    const { q } = directoryQuery.parse(request.query);
+    if (isDemo) return { people: [] };
+
+    const user = request.user!;
+    const graph = await request.graph!();
+    const users = new UserService(graph);
+    const people = await users.searchOrganisationDirectory(q, ownDomainOf(user.email), 8);
+    reply.header('Cache-Control', 'private, max-age=30');
+    return { people };
   });
 
   // ------------------------------------------------------------ history ---
@@ -88,22 +108,50 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       id = await createConversation(user.id, deriveTitle(message));
     }
 
+    const operation = createOperationContext({
+      requestId: String(request.id),
+      userId: user.id,
+      conversationId: id,
+      source: 'assistant',
+    });
+
     const prior = await getMessages(user.id, id);
-    const history: ChatMessage[] = prior
-      .slice(-HISTORY_TURNS * 2)
-      .map((m) => ({ role: m.role, content: m.content }));
+    // The context assembler receives the bounded stored history and chooses
+    // recent plus relevant turns. It does not blindly replay all 200 rows.
+    const history: ContextTurn[] = prior.map((m) => ({
+      role: m.role,
+      content: m.content,
+      createdAt: m.createdAt,
+      steps: m.steps,
+      approval: m.approval,
+    }));
 
     let mail: MailService;
     let users: UserService;
+    let calendar: CalendarService;
+    let contacts: ContactsService;
+    let tasks: TasksService;
+    let teams: TeamsService;
+    let files: FilesService;
 
     if (isDemo) {
-      const { fixtureMailService } = await import('../dev/fixtures.js');
+      const { fixtureMailService, fixtureTeamsService, fixtureFilesService } = await import('../dev/fixtures.js');
       mail = fixtureMailService() as MailService;
       users = {} as UserService;
+      calendar = {} as CalendarService;
+      contacts = {} as ContactsService;
+      tasks = {} as TasksService;
+      teams = fixtureTeamsService() as TeamsService;
+      files = fixtureFilesService() as FilesService;
     } else {
       const graph = await request.graph!();
       mail = new MailService(graph, ownDomainOf(user.email));
       users = new UserService(graph);
+      calendar = new CalendarService(graph);
+      contacts = new ContactsService(graph);
+      tasks = new TasksService(graph);
+      teams = new TeamsService(graph);
+      files = new FilesService(graph);
     }
 
     const refs = new RefTable();
@@ -111,15 +159,32 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       user,
       mail,
       users,
+      calendar,
+      contacts,
+      tasks,
+      teams,
+      files,
       me: user.email.toLowerCase(),
       refs,
+      conversationId: id,
+      requestId: operation.requestId,
+      workflowId: operation.workflowId,
       signal: AbortSignal.timeout(300_000),
     };
 
     const started = Date.now();
     await appendMessage({ conversationId: id, role: 'user', content: message });
-
-    const result = await runAgent({ ctx, history, message });
+    let result: Awaited<ReturnType<typeof runAgent>>;
+    try {
+      result = await runAgent({ ctx, history, message });
+    } catch (err) {
+      void recordTelemetry({
+        category: 'request', action: 'assistant_turn', status: 'failed', userId: user.id,
+        requestId: operation.requestId, conversationId: id, workflowId: operation.workflowId,
+        durationMs: Date.now() - started, reasonCode: 'request_error',
+      });
+      throw err;
+    }
 
     // Enforced, not requested: strip machinery or ids that slipped through.
     const reply = sanitiseReply(result.reply, { knownIds: refs.realIds() });
@@ -129,6 +194,7 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       role: 'assistant',
       content: reply,
       steps: result.steps,
+      approval: result.approval,
       model: result.model,
       durationMs: result.durationMs,
     });
@@ -144,11 +210,17 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       },
       'Assistant turn',
     );
+    void recordTelemetry({
+      category: 'request', action: 'assistant_turn', status: 'success', userId: user.id,
+      requestId: operation.requestId, conversationId: id, workflowId: operation.workflowId,
+      durationMs: Date.now() - started, iterations: result.iterations,
+    });
 
     return {
       conversationId: id,
       reply,
       steps: result.steps,
+      approval: result.approval,
       meta: { iterations: result.iterations, model: result.model, durationMs: result.durationMs },
     };
   });

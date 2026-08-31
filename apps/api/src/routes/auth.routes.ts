@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { env, allowedUsers, getSetupStatus, isDemo } from '../config/env.js';
+import { env, allowedUsers, emailIsAllowed, getSetupStatus, isDemo } from '../config/env.js';
 import { Errors } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { safeEqual } from '../lib/crypto.js';
@@ -83,7 +83,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     reply.setCookie(FLOW_COOKIE, JSON.stringify({ state, verifier: pkce.verifier }), {
       httpOnly: true,
       secure: env.NODE_ENV === 'production',
-      sameSite: 'lax',
+      sameSite: env.COOKIE_SAME_SITE,
       path: '/',
       maxAge: 600,
       signed: true,
@@ -120,7 +120,11 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const flow = JSON.parse(unsigned.value) as { state: string; verifier: string };
     if (!safeEqual(flow.state, params.state)) throw Errors.badRequest('Sign-in could not be verified.');
 
-    reply.clearCookie(FLOW_COOKIE, { path: '/' });
+    reply.clearCookie(FLOW_COOKIE, {
+      path: '/',
+      secure: env.NODE_ENV === 'production',
+      sameSite: env.COOKIE_SAME_SITE,
+    });
 
     const { result, cacheBlob } = await exchangeCode(params.code, flow.verifier);
 
@@ -134,7 +138,8 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     // --- Allowlist. Only named people may use this assistant. ---
     const signedInAs = (result.account?.username ?? claims.preferred_username ?? '').toLowerCase();
     const allowed = allowedUsers();
-    if (allowed.length > 0 && !allowed.includes(signedInAs)) {
+    // Fail closed. A missing allowlist must never expand access to the whole tenant.
+    if (!emailIsAllowed(signedInAs, allowed)) {
       logger.warn({ signedInAs }, 'Rejected sign-in for an account not on the allowlist');
       return reply.redirect(`${env.APP_URL}/signin?error=not_allowed`);
     }
@@ -178,6 +183,7 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
     const userId = request.user!.id;
     await clearSession(request, reply);
     await signOutUser(userId);
+    await authStore().markNeedsReauth(userId);
     return { ok: true, microsoftLogoutUrl: logoutUrl() };
   });
 }
