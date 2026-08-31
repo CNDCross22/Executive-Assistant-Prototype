@@ -206,7 +206,7 @@ describe('Phase 4 calendar conflict and availability intelligence', () => {
     assert.ok(tool?.preview);
     const args = tool.schema.parse({
       subject: 'Supplier call', start: '2026-09-01T10:30:00', end: '2026-09-01T11:30:00',
-      timezone: 'Asia/Taipei', attendees: [], location: '', body: '', isAllDay: false,
+      timezone: 'Asia/Taipei', attendees: [], location: '', body: '', isAllDay: false, reminderMinutesBeforeStart: 30,
     });
     const ctx = {
       user: { id: 'user', msUserId: 'ms', email: ME, displayName: 'Director', jobTitle: null, timezone: 'Asia/Taipei' },
@@ -217,10 +217,27 @@ describe('Phase 4 calendar conflict and availability intelligence', () => {
     assert.ok(preview.details.some((detail) => detail.label === 'Conflict check' && /1 conflict/.test(detail.value)));
     assert.match(preview.warning ?? '', /requested time has not been changed/i);
     assert.equal(preview.details.find((detail) => detail.label === 'When')?.value.includes('10:30'), true);
+    assert.equal(preview.details.find((detail) => detail.label === 'Reminder')?.value, '30 minutes before');
     assert.equal(tool.schema.safeParse({
       subject: 'Invalid', start: '2026-09-01T11:30:00', end: '2026-09-01T10:30:00',
       timezone: 'Asia/Taipei', attendees: [], location: '', body: '', isAllDay: false,
     }).success, false);
+  });
+
+  test('calendar creation sends the approved reminder to Microsoft Graph', async () => {
+    let requestBody: Record<string, unknown> | undefined;
+    const graph = {
+      request: async (_path: string, options: { body?: Record<string, unknown> }) => {
+        requestBody = options.body;
+        return { id: 'created', subject: 'IT Infrastructure', start: { dateTime: '2026-09-01T10:00:00', timeZone: 'Taipei Standard Time' }, end: { dateTime: '2026-09-01T11:00:00', timeZone: 'Taipei Standard Time' } };
+      },
+    } as unknown as GraphClient;
+    await new CalendarService(graph).create({
+      subject: 'IT Infrastructure', start: '2026-09-01T10:00:00', end: '2026-09-01T11:00:00',
+      timezone: 'Asia/Taipei', attendees: ['carlo@aretecare.com.au'], reminderMinutesBeforeStart: 30,
+    });
+    assert.equal(requestBody?.isReminderOn, true);
+    assert.equal(requestBody?.reminderMinutesBeforeStart, 30);
   });
 
   test('thread-aware mail read returns analysis and bounded chronology', async () => {

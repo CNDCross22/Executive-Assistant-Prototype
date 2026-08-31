@@ -73,6 +73,32 @@ export function looksLikeApprovalPrompt(reply: string): boolean {
   return patterns.some((pattern) => pattern.test(reply));
 }
 
+/**
+ * An action may be understood before it is executable. In that case the only
+ * safe model-only response is a question for material missing information.
+ * This deliberately excludes yes/no approval language and proposed defaults:
+ * the model may ask for a date, but it may not invent one and ask to proceed.
+ */
+export function looksLikeMaterialClarification(reply: string): boolean {
+  const text = reply.trim();
+  if (!text || looksLikeApprovalPrompt(text)) return false;
+  if (/\b(?:proceed|reply yes|say yes|ready to (?:send|create|book|schedule|delete|change)|please approve|(?:can|could|would|will) you approve|approve (?:this|the action|the change))\b/i.test(text)) {
+    return false;
+  }
+
+  const asksOpenQuestion =
+    /\b(?:what|which|who|when|where|how long|how many)\b/i.test(text) ||
+    /\b(?:could|would|can) you (?:tell me|provide|specify)\b/i.test(text) ||
+    /\bplease (?:provide|specify|tell me)\b/i.test(text);
+  const namesMaterialField =
+    /\b(?:date|day|time|start|finish|end|duration|time ?zone|location|recipient|email address|attendee|guest|person|contact|event|meeting|appointment|occurrence|subject|title|message|task|reminder)\b/i.test(text);
+  const asksWhichIdentity = /\bwhich\s+[^?\r\n]{1,80}\s+(?:do|did) you mean\b/i.test(text);
+  const isQuestionOrDirectRequest = /\?/.test(text) || /\bplease (?:provide|specify|tell me)\b/i.test(text);
+
+  return (asksOpenQuestion && namesMaterialField && isQuestionOrDirectRequest) ||
+    (asksWhichIdentity && /\?/.test(text));
+}
+
 interface ActionHistoryTurn {
   role: 'user' | 'assistant';
   content: string;
@@ -99,7 +125,12 @@ export function unresolvedActionGoal(history: ActionHistoryTurn[], message: stri
 
   const text = message.trim();
   if (!text || text.length > 240) return null;
+  if (/^(?:thanks|thank you|okay|ok|sure|yes|no|got it)[.!]?$/i.test(text)) return null;
+  const latestTurn = history.at(-1);
+  const answeringMaterialClarification =
+    latestTurn?.role === 'assistant' && looksLikeMaterialClarification(latestTurn.content);
   const clarification =
+    answeringMaterialClarification ||
     /\b(it|that|those|them|same|actually|instead)\b/i.test(text) ||
     /\b(?:on|in|at|for)\s+(?:the\s+)?(?:\d{1,2}(?::\d{2})?|today|tomorrow|yesterday|monday|tuesday|wednesday|thursday|friday|saturday|sunday|jan(?:uary)?|feb(?:ruary)?|mar(?:ch)?|apr(?:il)?|may|jun(?:e)?|jul(?:y)?|aug(?:ust)?|sep(?:tember)?|oct(?:ober)?|nov(?:ember)?|dec(?:ember)?)/i.test(text) ||
     /\b(?:try|prepare|do)\b.{0,30}\bagain\b/i.test(text) ||

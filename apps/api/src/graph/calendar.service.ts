@@ -103,7 +103,7 @@ export class CalendarService {
     }));
   }
 
-  async create(input: { subject: string; start: string; end: string; timezone: string; location?: string; attendees?: string[]; body?: string; isAllDay?: boolean }): Promise<CalendarEvent> {
+  async create(input: { subject: string; start: string; end: string; timezone: string; location?: string; attendees?: string[]; body?: string; isAllDay?: boolean; reminderMinutesBeforeStart?: number }): Promise<CalendarEvent> {
     const graphTimezone = toWindows(input.timezone);
     const e = await this.graph.request<GraphEvent>('/me/events', {
       method: 'POST', body: {
@@ -112,6 +112,8 @@ export class CalendarService {
         attendees: (input.attendees ?? []).map((address) => ({ emailAddress: { address }, type: 'required' })),
         body: input.body ? { contentType: 'Text', content: input.body } : undefined,
         isAllDay: input.isAllDay ?? false,
+        isReminderOn: input.reminderMinutesBeforeStart === undefined ? undefined : true,
+        reminderMinutesBeforeStart: input.reminderMinutesBeforeStart,
       }, label: 'calendar.create',
     });
     return this.shape(e);

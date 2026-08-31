@@ -18,6 +18,7 @@ import {
   isApprovalRevisionRequest,
   isDurableMemoryStatement,
   looksLikeApprovalPrompt,
+  looksLikeMaterialClarification,
   looksLikeInternalProcess,
   unresolvedActionGoal,
 } from '../agent/guards.js';
@@ -566,6 +567,32 @@ describe('action approval policy', () => {
     ), true);
   });
 
+  test('allows only genuine missing-information questions during an action', () => {
+    const clarifications = [
+      'What date and time should I use for the IT Infrastructure meeting?',
+      'When should it start, and how long should I allow?',
+      'Which Sarah did you mean?',
+      'Could you tell me the recipient email address?',
+      'Please provide the date, start time and duration.',
+      'What date, start time and duration should I use for the IT Infrastructure meeting with Carlo? The invitation will be sent after you approve the final preview.',
+    ];
+    for (const reply of clarifications) {
+      assert.equal(looksLikeMaterialClarification(reply), true, reply);
+    }
+
+    const unsafeOrIrrelevant = [
+      'Cancel this event? Please reply Yes to proceed or No to cancel.',
+      'Would you like me to proceed?',
+      'Could you approve this change?',
+      'Should I create it for tomorrow at 9 am?',
+      'I have everything I need.',
+      'What would you like me to do?',
+    ];
+    for (const reply of unsafeOrIrrelevant) {
+      assert.equal(looksLikeMaterialClarification(reply), false, reply);
+    }
+  });
+
   test('carries an unresolved cancellation through calendar-search and date clarifications', () => {
     const original = 'Please remove the Melbourne Opera from my calendar, cancel it.';
     const firstHistory = [
@@ -585,6 +612,21 @@ describe('action approval policy', () => {
     ], 'Please prepare the action again.'), original);
   });
 
+  test('carries a new meeting through successive required-field answers', () => {
+    const original =
+      'Add Carlo <carlo@aretecare.com.au> to an IT Infrastructure meeting. Notes: be on time and bring the necessary information.';
+    const afterFirstQuestion = [
+      { role: 'user' as const, content: original },
+      { role: 'assistant' as const, content: 'What date and start time should I use, and how long should I allow?' },
+    ];
+    assert.equal(unresolvedActionGoal(afterFirstQuestion, 'Tomorrow at 10 am.'), original);
+    assert.equal(unresolvedActionGoal([
+      ...afterFirstQuestion,
+      { role: 'user' as const, content: 'Tomorrow at 10 am.' },
+      { role: 'assistant' as const, content: 'How long should the meeting run?' },
+    ], 'One hour.'), original);
+  });
+
   test('does not revive an old action after approval or from an acknowledgement', () => {
     const original = 'Cancel the Melbourne Opera calendar event.';
     assert.equal(unresolvedActionGoal([
@@ -595,6 +637,10 @@ describe('action approval policy', () => {
       { role: 'user', content: original },
       { role: 'assistant', content: 'Delete this event?', steps: [{ tool: 'calendar_delete', status: 'approval_required' }] },
     ], "It's on 29 Aug."), null);
+    assert.equal(unresolvedActionGoal([
+      { role: 'user', content: 'Schedule a meeting with Sarah.' },
+      { role: 'assistant', content: 'What date and time should I use?' },
+    ], 'Thanks.'), null);
   });
 
   test('calendar read schemas tell the model their real bounds and search option', () => {

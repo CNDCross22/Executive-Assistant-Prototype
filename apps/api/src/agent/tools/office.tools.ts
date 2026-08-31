@@ -265,10 +265,10 @@ const calendarFindSlots = defineTool({
 });
 
 const calendarCreate = defineTool({
-  name: 'calendar_create', description: 'Create a calendar event or meeting. Explicit Yes is required; attendees receive invitations.', riskLevel: 2, capability: 'calendar_write',
-  schema: z.object({ subject: z.string().min(1).max(300), start: iso, end: iso, timezone: z.string().min(1), location: z.string().max(500).default(''), attendees: z.array(email).max(100).default([]), body: z.string().max(10_000).default(''), isAllDay: z.boolean().default(false) })
+  name: 'calendar_create', description: 'Create a calendar event or meeting, optionally with an Outlook reminder. Explicit Yes is required; attendees receive invitations.', riskLevel: 2, capability: 'calendar_write',
+  schema: z.object({ subject: z.string().min(1).max(300), start: iso, end: iso, timezone: z.string().min(1), location: z.string().max(500).default(''), attendees: z.array(email).max(100).default([]), body: z.string().max(10_000).default(''), isAllDay: z.boolean().default(false), reminderMinutesBeforeStart: z.number().int().min(0).max(40_320).optional() })
     .refine((value) => isValidCalendarRange(value.start, value.end), { message: 'The calendar end time must be after the start time.', path: ['end'] }),
-  parameters: objectSchema({ subject: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, timezone: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string', format: 'email' } }, body: { type: 'string' }, isAllDay: { type: 'boolean' } }, ['subject', 'start', 'end', 'timezone']),
+  parameters: objectSchema({ subject: { type: 'string' }, start: { type: 'string' }, end: { type: 'string' }, timezone: { type: 'string' }, location: { type: 'string' }, attendees: { type: 'array', items: { type: 'string', format: 'email' } }, body: { type: 'string' }, isAllDay: { type: 'boolean' }, reminderMinutesBeforeStart: { type: 'integer', minimum: 0, maximum: 40320, description: 'Exact number of minutes before the start for an Outlook reminder. Omit unless the Director supplied it.' } }, ['subject', 'start', 'end', 'timezone']),
   summarise: (a) => `Created calendar event: ${a.subject}`,
   preview: async (a, ctx) => {
     const events = await ctx.calendar.list(a.start, a.end, a.timezone, 20);
@@ -288,6 +288,7 @@ const calendarCreate = defineTool({
         ...(a.location ? [{ label: 'Where', value: a.location }] : []),
         ...(a.attendees.length ? [{ label: 'Attendees', value: a.attendees.join(', ') }] : []),
         ...(a.body ? [{ label: 'Notes', value: a.body }] : []),
+        ...(a.reminderMinutesBeforeStart !== undefined ? [{ label: 'Reminder', value: a.reminderMinutesBeforeStart === 0 ? 'At the start time' : `${a.reminderMinutesBeforeStart} minutes before` }] : []),
       ],
       warning: warnings.length ? warnings.join(' ') : undefined,
     };

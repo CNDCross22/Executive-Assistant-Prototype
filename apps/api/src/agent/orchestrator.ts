@@ -14,6 +14,7 @@ import {
   isApprovalRevisionRequest,
   isDurableMemoryStatement,
   looksLikeApprovalPrompt,
+  looksLikeMaterialClarification,
   looksLikeInternalProcess,
   unresolvedActionGoal,
 } from './guards.js';
@@ -333,10 +334,13 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
         const safeVerifiedNoMatch =
           actionReadState === 'empty' &&
           /\b(?:could not|couldn't|did not|didn't|haven't|have not|no)\b.{0,100}\b(?:find|found|match|result|event|message|email|task|contact)\b|\bnothing (?:was|has been) changed\b/is.test(raw);
+        const safeMaterialClarification = looksLikeMaterialClarification(raw);
         const invalidActionReply =
           looksLikeApprovalPrompt(raw) ||
           looksLikeInternalProcess(raw) ||
-          ((Boolean(actionGoal) || isApprovalRevisionRequest(message) || revision !== null) && !safeVerifiedNoMatch);
+          ((Boolean(actionGoal) || isApprovalRevisionRequest(message) || revision !== null) &&
+            !safeVerifiedNoMatch &&
+            !safeMaterialClarification);
         if (invalidActionReply && !steps.some((step) => step.status === 'approval_required')) {
           if (iteration < MAX_ITERATIONS) {
             messages.push({ role: 'assistant', content: raw });
@@ -344,6 +348,7 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
               role: 'system',
               content:
                 'The Director requested a Microsoft 365 change. Do not describe your workflow or write a preview yourself. ' +
+                'If material information such as the date, time, duration, recipient or exact target is missing, ask one concise open question for it. ' +
                 'Use the relevant read tool to identify the exact item if needed, then call the registered write tool. ' +
                 'Only the write tool can create the real Yes/No approval card.',
             });
