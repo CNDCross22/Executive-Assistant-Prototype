@@ -22,7 +22,7 @@ function item(overrides: Partial<DashboardItem> = {}): DashboardItem {
 }
 
 function dashboard(overrides: Partial<DashboardData> = {}): DashboardData {
-  return { generatedAt: NOW.toISOString(), needsYou: [item()], owedByYou: [], waitingOnThem: [], inbox: { unreadCount: 1, receivedToday: 1, filteredOut: 0, considered: 1 }, pendingProposals: [], ...overrides };
+  return { generatedAt: NOW.toISOString(), needsYou: [item()], owedByYou: [], waitingOnThem: [], inbox: { messages: [item()], unreadCount: 1, receivedToday: 1, filteredOut: 0, considered: 1 }, pendingProposals: [], ...overrides };
 }
 
 function calendar(overrides: Partial<CalendarEvent> = {}): CalendarEvent {

@@ -14,7 +14,7 @@ function dashboard(overrides: Partial<DashboardData> = {}): DashboardData {
     needsYou: [],
     owedByYou: [],
     waitingOnThem: [],
-    inbox: { unreadCount: 0, receivedToday: 0, filteredOut: 0, considered: 0 },
+    inbox: { messages: [], unreadCount: 0, receivedToday: 0, filteredOut: 0, considered: 0 },
     pendingProposals: [],
     ...overrides,
   };
@@ -101,7 +101,7 @@ describe('Phase 2 briefing policy', () => {
       }],
       owedByYou: [{ person: 'James', subject: 'Quote', daysWaiting: 4, webLink: '' }],
       waitingOnThem: [{ person: 'Michael', subject: 'Board pack', daysWaiting: 5, webLink: '' }],
-      inbox: { unreadCount: 3, receivedToday: 2, filteredOut: 6, considered: 10 },
+      inbox: { messages: [], unreadCount: 3, receivedToday: 2, filteredOut: 6, considered: 10 },
     });
     const text = renderDeterministicBriefing(data);
     assert.match(text, /NEEDS YOUR ATTENTION/);

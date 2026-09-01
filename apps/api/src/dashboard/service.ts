@@ -8,7 +8,7 @@
  * The AI briefing is a SEPARATE endpoint (see briefing.ts) so the page is
  * useful even when the model is unreachable, out of budget, or slow.
  */
-import type { MailService } from '../graph/mail.service.js';
+import type { MailMessage, MailService } from '../graph/mail.service.js';
 import { needsAttention, findFollowUps, looksAutomated } from '../mail/triage.js';
 import { assessSuspicion } from '../mail/suspicion.js';
 import { listMemory } from '../memory/store.js';
@@ -57,6 +57,8 @@ export interface DashboardData {
   owedByYou: FollowUpItem[];
   waitingOnThem: FollowUpItem[];
   inbox: {
+    /** Latest Inbox messages, including routine items that do not need attention. */
+    messages: DashboardItem[];
     unreadCount: number;
     receivedToday: number;
     filteredOut: number;
@@ -64,6 +66,44 @@ export interface DashboardData {
   };
   /** Preferences the assistant wants to confirm before believing them. */
   pendingProposals: { id: string; title: string; content: string }[];
+}
+
+/** Preserve every fetched Inbox row while enriching priority matches. */
+export function dashboardInboxItems(messages: MailMessage[], needsYou: DashboardItem[]): DashboardItem[] {
+  const prioritisedById = new Map(needsYou.map((item) => [item.id, item]));
+  return messages.map((message, index) => {
+    const prioritised = prioritisedById.get(message.id);
+    if (prioritised) return prioritised;
+
+    const suspicion = assessSuspicion([message.subject, message.bodyPreview].join(' '), message.from?.address);
+    return {
+      ref: `m${index + 1}`,
+      id: message.id,
+      from: message.from?.name ?? 'Unknown sender',
+      fromEmail: message.from?.address ?? '',
+      subject: message.subject,
+      receivedAt: message.receivedAt,
+      unread: !message.isRead,
+      external: message.isExternal,
+      importance: message.importance,
+      reasons: [],
+      priorityScore: 0,
+      deterministicScore: 0,
+      executiveAdjustment: 0,
+      request: null,
+      decisionRequired: false,
+      statedDeadline: null,
+      consequence: null,
+      impacts: [],
+      recommendation: { action: 'monitor', reason: 'This message was not classified as needing priority review.' },
+      hasUninspectedAttachments: message.hasAttachments,
+      preview: message.bodyPreview.slice(0, 180),
+      ...(suspicion.suspicious
+        ? { warning: 'This looks like a phishing or prompt-injection attempt. Nothing has been acted on.' }
+        : {}),
+      webLink: message.webLink,
+    };
+  });
 }
 
 export async function buildDashboard(
@@ -74,11 +114,10 @@ export async function buildDashboard(
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
 
-  const [attention, followUps, unread, today, memory] = await Promise.all([
+  const [attention, followUps, inboxMessages, memory] = await Promise.all([
     needsAttention(mail, me, { limit: 6, sinceHours: 72 }),
     findFollowUps(mail, me, { minDays: 3, limit: 5 }),
-    mail.list({ limit: 100, unreadOnly: true }).catch(() => []),
-    mail.list({ limit: 100, since: startOfToday.toISOString() }).catch(() => []),
+    mail.list({ folder: 'inbox', limit: 100 }).catch(() => []),
     listMemory(userId).catch(() => []),
   ]);
 
@@ -113,6 +152,8 @@ export async function buildDashboard(
     };
   });
 
+  const messages = dashboardInboxItems(inboxMessages, needsYou);
+
   const shape = (f: { conversationId: string; counterpart: string; subject: string; lastMessageAt: string; daysWaiting: number; webLink: string }): FollowUpItem => ({
     conversationId: f.conversationId,
     person: f.counterpart.replace(/\s*<[^>]+>$/, '').trim() || f.counterpart,
@@ -128,8 +169,9 @@ export async function buildDashboard(
     owedByYou: followUps.owedByHer.map(shape),
     waitingOnThem: followUps.awaitingReply.map(shape),
     inbox: {
-      unreadCount: unread.length,
-      receivedToday: today.filter((m) => !looksAutomated(m)).length,
+      messages,
+      unreadCount: inboxMessages.filter((message) => !message.isRead).length,
+      receivedToday: inboxMessages.filter((message) => message.receivedAt >= startOfToday.toISOString() && !looksAutomated(message)).length,
       filteredOut: attention.filteredOutCount,
       considered: attention.consideredCount,
     },

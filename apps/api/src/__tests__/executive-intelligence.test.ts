@@ -10,6 +10,7 @@ import type { MailMessage, MailMessageDetail } from '../graph/mail.service.js';
 import { availableTools } from '../agent/registry.js';
 import { RefTable } from '../agent/refs.js';
 import type { ActionPreview, ToolContext } from '../agent/tools/types.js';
+import { dashboardInboxItems } from '../dashboard/service.js';
 
 const ME = 'director@company.com';
 
@@ -33,6 +34,31 @@ function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
 }
 
 describe('Phase 4 evidence-backed email intelligence', () => {
+  test('the dashboard Inbox keeps routine messages outside the priority shortlist', () => {
+    const priority = mail({ id: 'priority', subject: 'Decision needed' });
+    const routine = mail({
+      id: 'routine',
+      subject: 'Weekly newsletter',
+      from: { name: 'Newsletter', address: 'news@example.com' },
+      bodyPreview: 'Unsubscribe from this weekly digest.',
+    });
+    const prioritised = {
+      ref: 'd1', id: priority.id, from: 'Sarah', fromEmail: 'sarah@partner.com', subject: priority.subject,
+      receivedAt: priority.receivedAt, unread: true, external: true, importance: 'normal' as const,
+      reasons: ['direct request'], priorityScore: 80, deterministicScore: 80, executiveAdjustment: 0,
+      request: 'Please decide.', decisionRequired: true, statedDeadline: null, consequence: null, impacts: [],
+      recommendation: { action: 'decide' as const, reason: 'A decision is requested.' },
+      hasUninspectedAttachments: false, preview: priority.bodyPreview, webLink: '',
+    };
+
+    const result = dashboardInboxItems([priority, routine], [prioritised]);
+
+    assert.deepEqual(result.map((item) => item.id), ['priority', 'routine']);
+    assert.equal(result[0]!.priorityScore, 80);
+    assert.equal(result[1]!.priorityScore, 0);
+    assert.equal(result[1]!.subject, 'Weekly newsletter');
+  });
+
   test('whole Inbox summary reads bounded message content without wildcard search', async () => {
     const tool = availableTools().find((candidate) => candidate.name === 'mail_inbox_summary');
     assert.ok(tool);

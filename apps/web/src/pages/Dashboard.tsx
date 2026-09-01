@@ -78,7 +78,7 @@ interface DashboardResponse {
   needsYou: DashboardItem[];
   owedByYou: FollowUpItem[];
   waitingOnThem: FollowUpItem[];
-  inbox: { unreadCount: number; receivedToday: number; filteredOut: number; considered: number };
+  inbox: { messages?: DashboardItem[]; unreadCount: number; receivedToday: number; filteredOut: number; considered: number };
   pendingProposals: { id: string; title: string; content: string }[];
   proactive: ProactiveInbox | null;
   user: { displayName: string; firstName: string };
@@ -194,11 +194,12 @@ export default function Dashboard({
   // Keep hooks above every loading/error return. React requires the same hook
   // order on the first render and after the mailbox data arrives.
   const needsYou = data?.needsYou ?? EMPTY_DASHBOARD_ITEMS;
-  const visibleNeeds = useMemo(() => {
+  const inboxMessages = data?.inbox.messages ?? needsYou;
+  const visibleMessages = useMemo(() => {
     const query = search.trim().toLowerCase();
     const priority = (item: DashboardItem) => item.priorityScore + (item.warning ? 100 : 0);
 
-    return needsYou
+    return inboxMessages
       .filter((item) => {
         if (query && !`${item.from} ${item.fromEmail} ${item.subject} ${item.preview}`.toLowerCase().includes(query)) {
           return false;
@@ -215,7 +216,7 @@ export default function Dashboard({
         if (sort === 'sender') return a.from.localeCompare(b.from);
         return priority(b) - priority(a) || Date.parse(b.receivedAt) - Date.parse(a.receivedAt);
       });
-  }, [filter, needsYou, search, sort]);
+  }, [filter, inboxMessages, search, sort]);
 
   if (isLoading || !initialLoadComplete) {
     return <LoadingScreen label="Loading dashboard" />;
@@ -237,11 +238,11 @@ export default function Dashboard({
 
   const { owedByYou, waitingOnThem, pendingProposals, proactive } = data;
   const filters: { value: InboxFilter; label: string; count: number }[] = [
-    { value: 'all', label: 'All', count: needsYou.length },
-    { value: 'unread', label: 'Unread', count: needsYou.filter((item) => item.unread).length },
-    { value: 'urgent', label: 'Important', count: needsYou.filter((item) => item.importance === 'high').length },
-    { value: 'external', label: 'External', count: needsYou.filter((item) => item.external).length },
-    { value: 'warning', label: 'Warnings', count: needsYou.filter((item) => Boolean(item.warning)).length },
+    { value: 'all', label: 'All', count: inboxMessages.length },
+    { value: 'unread', label: 'Unread', count: inboxMessages.filter((item) => item.unread).length },
+    { value: 'urgent', label: 'Important', count: inboxMessages.filter((item) => item.importance === 'high').length },
+    { value: 'external', label: 'External', count: inboxMessages.filter((item) => item.external).length },
+    { value: 'warning', label: 'Warnings', count: inboxMessages.filter((item) => Boolean(item.warning)).length },
   ];
 
   return (
@@ -326,9 +327,9 @@ export default function Dashboard({
             <div className="flex flex-col gap-3 px-4 py-3" style={{ borderBottom: '1px solid var(--line)' }}>
               <div className="flex items-baseline justify-between gap-3">
                 <div>
-                  <h2 className="h-display text-[1.05rem]">Priority inbox</h2>
+                  <h2 className="h-display text-[1.05rem]">Inbox</h2>
                   <p className="mt-0.5 text-[0.84rem]" style={{ color: 'var(--muted)' }}>
-                    {visibleNeeds.length === needsYou.length ? `${needsYou.length} messages need review` : `${visibleNeeds.length} of ${needsYou.length} shown`}
+                    {visibleMessages.length === inboxMessages.length ? `${inboxMessages.length} messages` : `${visibleMessages.length} of ${inboxMessages.length} shown`}
                   </p>
                 </div>
                 {(search || filter !== 'all') && <button className="text-action" onClick={() => { setSearch(''); setFilter('all'); }}>Clear</button>}
@@ -340,7 +341,7 @@ export default function Dashboard({
                   value={search}
                   onChange={(event) => setSearch(event.target.value)}
                   placeholder="Search sender, subject or message…"
-                  aria-label="Search priority inbox"
+                  aria-label="Search inbox"
                 />
                 <select className="control" value={sort} onChange={(event) => setSort(event.target.value as typeof sort)} aria-label="Sort messages">
                   <option value="priority">Priority first</option>
@@ -349,7 +350,7 @@ export default function Dashboard({
                   <option value="sender">Sender A–Z</option>
                 </select>
               </div>
-              <div className="filter-strip" aria-label="Filter priority inbox">
+              <div className="filter-strip" aria-label="Filter inbox">
                 {filters.map((option) => (
                   <button
                     key={option.value}
@@ -364,14 +365,14 @@ export default function Dashboard({
               </div>
             </div>
             <div className="scroll min-h-0 flex-1 px-3 py-1">
-            {visibleNeeds.length === 0 ? (
+            {visibleMessages.length === 0 ? (
               <div className="px-3 py-10 text-center">
                 <p className="h-display">No matching messages</p>
                 <p className="mt-1 text-[0.9rem]" style={{ color: 'var(--muted)' }}>Try a different search or clear the filter.</p>
               </div>
             ) : (
               <ul className="flex min-w-0 flex-col">
-                {visibleNeeds.map((item, idx) => (
+                {visibleMessages.map((item, idx) => (
                   <li key={item.ref} style={{ borderTop: idx === 0 ? 'none' : '1px solid var(--line-soft)' }}>
                     <button className="lift block w-full min-w-0 rounded px-2 py-3 text-left" style={{ background: 'none', border: 'none' }} onClick={() => setOpenMessageId(item.id)}>
                       {item.warning && <span className="mb-2 block rounded border-l-2 px-3 py-1.5 text-[0.85rem]" style={{ background: 'var(--clay-bg)', borderColor: 'var(--clay)' }}>{item.warning}</span>}
