@@ -37,7 +37,6 @@ interface Props {
   conversations: ConversationSummary[];
   activeId: string | null;
   user: NonNullable<MeResponse['user']>;
-  demo: boolean;
   onSelect: (id: string) => void;
   onNew: () => void;
   onDelete: (id: string) => void;
@@ -51,7 +50,6 @@ export default function Sidebar({
   conversations,
   activeId,
   user,
-  demo,
   onSelect,
   onNew,
   onDelete,
@@ -76,30 +74,15 @@ export default function Sidebar({
       className="flex h-full w-full flex-col"
       style={{ background: 'var(--sunk)', borderRight: '1px solid var(--line)' }}
     >
-      {/* brand */}
-      <div className="flex items-center justify-between px-5 pb-4 pt-5">
-        <div className="flex items-center gap-2.5">
-          <span
-            className="flex h-8 w-8 items-center justify-center rounded-lg text-sm"
-            style={{ background: 'var(--ink)', color: 'var(--ground)', fontFamily: 'var(--font-display)', fontWeight: 700 }}
-          >
-            EA
-          </span>
-          <span className="h-display text-[1rem]">Director workspace</span>
-          {demo && (
-            <span className="label" style={{ color: 'var(--clay)' }}>
-              demo
-            </span>
-          )}
-        </div>
-        {onClose && (
+      {onClose && (
+        <div className="flex justify-end px-3 pb-2 pt-3 lg:hidden">
           <button className="icon-button lg:hidden" onClick={onClose} aria-label="Close navigation">
             <Icon name="close" />
           </button>
-        )}
-      </div>
+        </div>
+      )}
 
-      <nav className="mx-3 flex flex-col gap-1" aria-label="Workspace">
+      <nav className="mx-3 mt-3 flex flex-col gap-1" aria-label="Workspace">
         {navigation.map((item) => (
           <button
             key={item.view}

@@ -114,7 +114,6 @@ export default function Workspace({
     conversations,
     activeId,
     user,
-    demo,
     onSelect: openConversation,
     onNew: startNew,
     onDelete: removeConversation,
