@@ -44,8 +44,10 @@ const schema = z.object({
   MICROSOFT_TENANT_ID: optionalText(),
   MICROSOFT_REDIRECT_URI: optionalUrl(),
 
-  // Who is allowed in. Comma-separated addresses.
+  // Who is allowed in. Comma-separated addresses and/or organisation domains.
+  // The Microsoft tenant lock still applies before either allowlist is checked.
   ALLOWED_USERS: z.string().default(''),
+  ALLOWED_EMAIL_DOMAINS: z.string().default(''),
   PRIMARY_USER_EMAIL: optionalEmail(),
 
   // Supabase / Postgres
@@ -138,7 +140,12 @@ export function productionConfigurationIssues(config: Env): string[] {
     issues.push('SESSION_SECRET and ENCRYPTION_KEY must be different.');
   }
   if (!config.DATABASE_URL) issues.push('DATABASE_URL is required in production; in-memory authentication is not permitted.');
-  if (!config.PRIMARY_USER_EMAIL && !config.ALLOWED_USERS.trim()) issues.push('At least one allowed Director email is required in production.');
+  if (!config.PRIMARY_USER_EMAIL && !config.ALLOWED_USERS.trim() && allowedEmailDomains(config.ALLOWED_EMAIL_DOMAINS).length === 0) {
+    issues.push('At least one allowed user email or email domain is required in production.');
+  }
+  if (configuredEmailDomainEntries(config.ALLOWED_EMAIL_DOMAINS).some((domain) => !validEmailDomain(domain))) {
+    issues.push('ALLOWED_EMAIL_DOMAINS must contain valid comma-separated email domains.');
+  }
   if (config.OPENAI_MONTHLY_BUDGET_USD <= 0) issues.push('OPENAI_MONTHLY_BUDGET_USD must be positive in production.');
   if (new URL(config.APP_URL).origin !== new URL(config.API_URL).origin && config.COOKIE_SAME_SITE !== 'none') {
     issues.push('COOKIE_SAME_SITE must be none when the production web and API origins differ.');
@@ -239,10 +246,12 @@ export function getSetupStatus(): SetupStatus {
     {
       key: 'allowlist',
       label: 'Who may sign in',
-      ready: Boolean(env.PRIMARY_USER_EMAIL || env.ALLOWED_USERS.trim()),
-      detail: env.PRIMARY_USER_EMAIL
-        ? 'Primary Director allowlist configured'
-        : 'Set PRIMARY_USER_EMAIL to the mailbox this assistant serves.',
+      ready: Boolean(env.PRIMARY_USER_EMAIL || env.ALLOWED_USERS.trim() || allowedEmailDomains().length),
+      detail: allowedEmailDomains().length
+        ? 'Organisation email-domain allowlist configured'
+        : env.PRIMARY_USER_EMAIL || env.ALLOWED_USERS.trim()
+          ? 'Named-user allowlist configured'
+          : 'Set ALLOWED_EMAIL_DOMAINS or add specific mailbox addresses.',
     },
   ];
 
@@ -258,8 +267,33 @@ export function allowedUsers(): string[] {
   return [...new Set(list)];
 }
 
-export function emailIsAllowed(email: string, allowed = allowedUsers()): boolean {
-  return allowed.map((value) => value.trim().toLowerCase()).includes(email.trim().toLowerCase());
+/** Organisation email domains permitted to sign in, lower-cased and deduplicated. */
+export function allowedEmailDomains(value = env.ALLOWED_EMAIL_DOMAINS): string[] {
+  const domains = configuredEmailDomainEntries(value).filter(validEmailDomain);
+  return [...new Set(domains)];
+}
+
+function configuredEmailDomainEntries(value: string): string[] {
+  return value.split(',')
+    .map((item) => item.trim().toLowerCase().replace(/^@/, ''))
+    .filter(Boolean);
+}
+
+function validEmailDomain(value: string): boolean {
+  return /^(?=.{1,253}$)(?:[a-z0-9](?:[a-z0-9-]{0,61}[a-z0-9])?\.)+[a-z]{2,63}$/.test(value);
+}
+
+export function emailIsAllowed(
+  email: string,
+  allowed = allowedUsers(),
+  domains = allowedEmailDomains(),
+): boolean {
+  const normalised = email.trim().toLowerCase();
+  if (allowed.map((value) => value.trim().toLowerCase()).includes(normalised)) return true;
+  const addressParts = normalised.split('@');
+  if (addressParts.length !== 2 || !addressParts[0]) return false;
+  const domain = addressParts[1];
+  return Boolean(domain && domains.includes(domain));
 }
 
 export function redirectUri(): string {

@@ -42,8 +42,9 @@ Supabase transaction-pooler connection string and retain database backups. A mis
 integration may still be reported through the setup screen, but security-critical production
 defaults cannot silently degrade.
 
-The allowlist fails closed. If neither `PRIMARY_USER_EMAIL` nor `ALLOWED_USERS` contains the
-signed-in address, authentication is rejected even when the account belongs to the correct tenant.
+The allowlist fails closed. Authentication is rejected unless the signed-in address is named in
+`PRIMARY_USER_EMAIL`/`ALLOWED_USERS` or exactly matches a domain in `ALLOWED_EMAIL_DOMAINS`, even
+when the account belongs to the correct tenant.
 
 ## Microsoft 365 gate
 

@@ -1,6 +1,6 @@
 # Hermes
 
-A private AI executive assistant for one Director, connected to one Microsoft 365 tenant.
+A private AI executive assistant for Arete Care team members, connected to one Microsoft 365 tenant.
 
 One conversation. Ask it about your email, your day, or who is waiting on you. It reads
 your real Outlook, tells you what it actually found, and checks with you before it changes
@@ -80,10 +80,11 @@ with the new grants. See `apps/api/src/config/graphScopes.ts` and `docs/MICROSOF
 ### 2. Who may sign in
 
 ```dotenv
-PRIMARY_USER_EMAIL=test.account@yourdomain.com
+ALLOWED_EMAIL_DOMAINS=aretecare.com.au
 ```
 
-Use a test mailbox first. Anyone not listed is refused, even inside your own tenant.
+Every account must pass both the Microsoft tenant lock and this exact email-domain allowlist.
+Use `PRIMARY_USER_EMAIL` or `ALLOWED_USERS` instead when access should be limited to named accounts.
 
 ### 3. Database
 

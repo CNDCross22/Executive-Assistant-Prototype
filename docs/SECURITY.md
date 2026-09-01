@@ -29,7 +29,8 @@ PKCE. We never see her password, and no Graph token ever reaches the browser.
 1. **Tenant lock** — the `tid` claim must equal `MICROSOFT_TENANT_ID`. A valid
    Microsoft account from any other organisation is rejected.
 2. **Allowlist** — the signed-in address must appear in `PRIMARY_USER_EMAIL` or
-   `ALLOWED_USERS`. A colleague inside your own tenant cannot sign in.
+   `ALLOWED_USERS`, or its exact domain must appear in `ALLOWED_EMAIL_DOMAINS`.
+   The Arete Care deployment permits `aretecare.com.au`; lookalike and subdomains do not match.
 
 The authority URL is single-tenant, so the common endpoint is never used.
 
@@ -196,7 +197,7 @@ previews and credentials are not telemetry fields.**
 - [ ] Rotate any credential that has ever appeared in a chat, screenshot or commit
 - [ ] `DEMO_MODE=false`
 - [ ] HTTPS with `NODE_ENV=production` so `Secure` cookies apply
-- [ ] `PRIMARY_USER_EMAIL` set to exactly the intended mailbox
+- [ ] `ALLOWED_EMAIL_DOMAINS` or the named-user allowlist matches the intended audience
 - [ ] Confirm the consented delegated scopes match the fifteen listed above
 - [ ] `npm test` green
 

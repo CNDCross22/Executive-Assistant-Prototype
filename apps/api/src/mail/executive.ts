@@ -189,7 +189,7 @@ export function analyseThread(
       return {
         direction: fromDirector ? 'from_director' : message.from ? 'to_director' : 'unknown',
         at: messageTime(message),
-        person: fromDirector ? 'Director' : (message.from?.name || message.from?.address || 'Unknown sender'),
+        person: fromDirector ? 'You' : (message.from?.name || message.from?.address || 'Unknown sender'),
         summary: clean(message.bodyPreview || message.subject, 220),
       };
     }),
@@ -200,7 +200,7 @@ export function analyseThread(
 export function executivePrioritySignals(analysis: ExecutiveMailAnalysis): Array<{ points: number; reason: string }> {
   const signals: Array<{ points: number; reason: string }> = [];
   if (analysis.deadline) signals.push({ points: 20, reason: `Contains a stated deadline: ${analysis.deadline.statedText}` });
-  if (analysis.decisionRequired) signals.push({ points: 15, reason: 'Appears to require a Director decision or approval' });
+  if (analysis.decisionRequired) signals.push({ points: 15, reason: 'Appears to require your decision or approval' });
   else if (analysis.responseExpected) signals.push({ points: 10, reason: 'Contains a request or unanswered question' });
   if (analysis.impacts.includes('security')) signals.push({ points: 25, reason: 'Potential security risk requiring careful review' });
   if (analysis.impacts.some((impact) => ['financial', 'legal', 'operational', 'customer', 'governance'].includes(impact))) {

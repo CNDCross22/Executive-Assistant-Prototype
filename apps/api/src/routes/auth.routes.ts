@@ -1,6 +1,6 @@
 import type { FastifyInstance } from 'fastify';
 import { z } from 'zod';
-import { env, allowedUsers, emailIsAllowed, getSetupStatus, isDemo } from '../config/env.js';
+import { env, allowedEmailDomains, allowedUsers, emailIsAllowed, getSetupStatus, isDemo } from '../config/env.js';
 import { Errors } from '../lib/errors.js';
 import { logger } from '../lib/logger.js';
 import { safeEqual } from '../lib/crypto.js';
@@ -135,19 +135,24 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
       return reply.redirect(`${env.APP_URL}/signin?error=wrong_tenant`);
     }
 
-    // --- Allowlist. Only named people may use this assistant. ---
+    // --- Allowlist. Named accounts or explicitly configured organisation domains. ---
     const signedInAs = (result.account?.username ?? claims.preferred_username ?? '').toLowerCase();
     const allowed = allowedUsers();
-    // Fail closed. A missing allowlist must never expand access to the whole tenant.
-    if (!emailIsAllowed(signedInAs, allowed)) {
-      logger.warn({ signedInAs }, 'Rejected sign-in for an account not on the allowlist');
-      return reply.redirect(`${env.APP_URL}/signin?error=not_allowed`);
-    }
+    const allowedDomains = allowedEmailDomains();
 
     // Read the real profile from Graph rather than trusting the token alone.
     const { GraphClient } = await import('../graph/client.js');
     const graph = new GraphClient(result.accessToken, { userId: signedInAs });
     const profile = await new UserService(graph).getProfile();
+    // A Microsoft UPN can use the tenant's onmicrosoft.com alias while the
+    // canonical mailbox address uses the organisation domain. Accept either
+    // verified representation, but fail closed when neither is configured.
+    const tokenIdentityAllowed = emailIsAllowed(signedInAs, allowed, allowedDomains);
+    const profileIdentityAllowed = emailIsAllowed(profile.email, allowed, allowedDomains);
+    if (!tokenIdentityAllowed && !profileIdentityAllowed) {
+      logger.warn({ signedInAs, profileEmail: profile.email }, 'Rejected profile outside the configured email allowlist');
+      return reply.redirect(`${env.APP_URL}/signin?error=not_allowed`);
+    }
 
     let timezone = 'UTC';
     try {

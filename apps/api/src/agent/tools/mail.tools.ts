@@ -102,7 +102,7 @@ const needsAttentionTool = defineTool({
         verifiedAttention: m.score > 20,
       })),
       note:
-        'Use items for claims that mail truly needs attention. If the Director requested an exact count, use rankedItems to fill that count and clearly label rows where verifiedAttention is false as lower-priority review, not required action.',
+        'Use items for claims that mail truly needs attention. If the user requested an exact count, use rankedItems to fill that count and clearly label rows where verifiedAttention is false as lower-priority review, not required action.',
     };
   },
 });

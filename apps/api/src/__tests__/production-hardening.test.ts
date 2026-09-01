@@ -1,7 +1,7 @@
 import { describe, test } from 'node:test';
 import assert from 'node:assert/strict';
 import { GraphClient, graphRetryDelayMs } from '../graph/client.js';
-import { emailIsAllowed, env, getSetupStatus, productionConfigurationIssues, type Env } from '../config/env.js';
+import { allowedEmailDomains, emailIsAllowed, env, getSetupStatus, productionConfigurationIssues, type Env } from '../config/env.js';
 import { buildApp } from '../app.js';
 
 function production(overrides: Partial<Env> = {}): Env {
@@ -13,6 +13,7 @@ function production(overrides: Partial<Env> = {}): Env {
     DATABASE_URL: 'postgres://example.invalid/hermes',
     PRIMARY_USER_EMAIL: 'director@example.com',
     ALLOWED_USERS: '',
+    ALLOWED_EMAIL_DOMAINS: '',
     OPENAI_MONTHLY_BUDGET_USD: 5,
     COOKIE_SAME_SITE: 'none',
     DEMO_MODE: false,
@@ -104,10 +105,21 @@ describe('Phase 7 production identity and configuration', () => {
     }
   });
 
-  test('the Director allowlist fails closed and compares addresses case-insensitively', () => {
-    assert.equal(emailIsAllowed('director@example.com', []), false);
-    assert.equal(emailIsAllowed('Director@Example.com', ['director@example.com']), true);
-    assert.equal(emailIsAllowed('colleague@example.com', ['director@example.com']), false);
+  test('the sign-in allowlist fails closed and compares addresses case-insensitively', () => {
+    assert.equal(emailIsAllowed('director@example.com', [], []), false);
+    assert.equal(emailIsAllowed('Director@Example.com', ['director@example.com'], []), true);
+    assert.equal(emailIsAllowed('colleague@example.com', ['director@example.com'], []), false);
+  });
+
+  test('permits every account at an explicitly allowed organisation domain only', () => {
+    const domains = allowedEmailDomains('ARETECARE.COM.AU, @aretecare.com.au');
+    assert.deepEqual(domains, ['aretecare.com.au']);
+    assert.equal(emailIsAllowed('person@aretecare.com.au', [], domains), true);
+    assert.equal(emailIsAllowed('PERSON@ARETECARE.COM.AU', [], domains), true);
+    assert.equal(emailIsAllowed('person@sub.aretecare.com.au', [], domains), false);
+    assert.equal(emailIsAllowed('person@aretecare.com.au.example.net', [], domains), false);
+    assert.equal(emailIsAllowed('person@aretecare.com.au@other.example', [], domains), false);
+    assert.equal(emailIsAllowed('person@other.example', [], domains), false);
   });
 
   test('public setup details do not disclose the tenant id or Director address', () => {
@@ -128,12 +140,28 @@ describe('Phase 7 production identity and configuration', () => {
       DATABASE_URL: undefined,
       PRIMARY_USER_EMAIL: undefined,
       ALLOWED_USERS: '',
+      ALLOWED_EMAIL_DOMAINS: '',
       OPENAI_MONTHLY_BUDGET_USD: 0,
     }));
     assert.ok(issues.some((issue) => issue.includes('must be different')));
     assert.ok(issues.some((issue) => issue.includes('DATABASE_URL')));
-    assert.ok(issues.some((issue) => issue.includes('allowed Director')));
+    assert.ok(issues.some((issue) => issue.includes('allowed user')));
     assert.ok(issues.some((issue) => issue.includes('BUDGET')));
+  });
+
+  test('accepts a domain-scoped organisation and rejects malformed domain configuration', () => {
+    assert.deepEqual(productionConfigurationIssues(production({
+      PRIMARY_USER_EMAIL: undefined,
+      ALLOWED_USERS: '',
+      ALLOWED_EMAIL_DOMAINS: 'aretecare.com.au',
+    })), []);
+
+    const issues = productionConfigurationIssues(production({
+      PRIMARY_USER_EMAIL: undefined,
+      ALLOWED_USERS: '',
+      ALLOWED_EMAIL_DOMAINS: 'aretecare.com.au, not an email domain',
+    }));
+    assert.ok(issues.some((issue) => issue.includes('ALLOWED_EMAIL_DOMAINS')));
   });
 
   test('requires cross-site production cookies to use SameSite=None', () => {

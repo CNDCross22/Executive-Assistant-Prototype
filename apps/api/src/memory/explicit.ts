@@ -85,13 +85,13 @@ export function parseExplicitMemory(message: string, now = new Date()): Explicit
       pattern: /^i (?:strongly )?prefer\s+(.+)$/i,
       type: 'preference',
       title: (body) => 'Prefers ' + body,
-      content: (body) => 'The Director prefers ' + body + '.',
+      content: (body) => 'The user prefers ' + body + '.',
     },
     {
       pattern: /^my preference is\s+(.+)$/i,
       type: 'preference',
       title: (body) => 'Prefers ' + body,
-      content: (body) => 'The Director prefers ' + body + '.',
+      content: (body) => 'The user prefers ' + body + '.',
     },
     {
       pattern: /^from now on,?\s+(.+)$/i,

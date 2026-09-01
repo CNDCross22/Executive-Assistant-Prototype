@@ -296,7 +296,7 @@ export default function Assistant({
         <div className="mx-auto max-w-[46rem] px-4 py-7 sm:px-6 sm:py-10">
           {turns.length === 0 ? (
             <div className="rise">
-               <p className="label mb-4">Director's assistant · {' '}
+               <p className="label mb-4">Your assistant · {' '}
                 {new Date().toLocaleDateString(undefined, {
                   weekday: 'long',
                   day: 'numeric',

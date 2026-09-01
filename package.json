@@ -2,7 +2,7 @@
   "name": "hermes-ea",
   "version": "0.1.0",
   "private": true,
-  "description": "Private AI Executive Assistant, single-tenant, Microsoft 365 connected",
+  "description": "Private AI Executive Assistant for an organisation, single-tenant, Microsoft 365 connected",
   "workspaces": [
     "apps/api",
     "apps/web",

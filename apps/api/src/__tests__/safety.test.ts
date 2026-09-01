@@ -604,7 +604,7 @@ describe('action approval policy', () => {
     assert.deepEqual(parseExplicitMemory('I prefer concise, structured reports.'), {
       type: 'preference',
       title: 'Prefers concise, structured reports',
-      content: 'The Director prefers concise, structured reports.',
+      content: 'The user prefers concise, structured reports.',
       key: 'preference.concise.structured.reports',
       importance: 3,
       scope: 'global',
@@ -818,7 +818,9 @@ describe('executive assistant soul', () => {
 
     assert.equal(status.source, 'soul.md');
     assert.match(soul, /Australian English/);
-    assert.match(soul, /Do not ask her to\s+rephrase/);
+    assert.match(soul, /Do not ask them to\s+rephrase/);
+    assert.match(soul, /private Executive Assistant to the signed-in person/);
+    assert.doesNotMatch(soul, /private Executive Assistant to one Director/);
     assert.match(soul, /Please reply Yes to proceed or No to cancel\./);
     assert.doesNotMatch(soul, /Under 100 words|British English/);
   });

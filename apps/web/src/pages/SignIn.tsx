@@ -2,7 +2,7 @@ import { loginUrl } from '../lib/api';
 
 const MESSAGES: Record<string, string> = {
   wrong_tenant: 'That account belongs to a different organisation. This assistant is locked to yours.',
-  not_allowed: 'That account is not on the permitted list for this assistant.',
+  not_allowed: 'Use an approved Arete Care Microsoft account to sign in.',
   access_denied: 'Sign-in was cancelled.',
 };
 
@@ -18,7 +18,7 @@ export default function SignIn() {
         <p className="label mb-4">Executive Assistant</p>
         <h1 className="h-display mb-3 text-3xl">Good to see you</h1>
         <p className="mb-8" style={{ color: 'var(--ink-soft)' }}>
-          Sign in with your Microsoft account. Your password is never shown to, or stored by, this
+          Sign in with your Arete Care Microsoft account. Your password is never shown to, or stored by, this
           application.
         </p>
 
