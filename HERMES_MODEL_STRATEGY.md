@@ -12,12 +12,12 @@ Prepared: 31 August 2026
 **CONFIRMED**:
 
 - Hermes uses the official OpenAI Node SDK and the Responses API.
-- Routine direct and action-status work uses `gpt-5.6-luna` with reasoning `none` on the standard tier.
-- Executive analysis, drafts, and sensitive work use `gpt-5.6-sol` with reasoning `low` and Fast processing.
-- Briefings use `gpt-5.6-luna` with reasoning `low` on the standard tier.
+- Routine direct and action-status work uses `gpt-5.6-luna` with reasoning `none` and Fast processing.
+- Executive analysis, drafts, and sensitive work use `gpt-5.6-sol` with reasoning `medium` and Fast processing.
+- Briefings use `gpt-5.6-sol` with reasoning `medium` and Fast processing.
 - The reserved background role uses Luna with reasoning `none`, but its category budget is zero and background model work is disabled.
 - Response modes apply adaptive output ceilings without requiring long answers.
-- The global model budget is USD 5 per month. The recommended category split is USD 4.50 interactive and USD 0.50 briefing.
+- The global model budget is USD 10 per month. The category split is USD 8 interactive and USD 2 briefing.
 - Every model iteration is independently budget-checked and attributed by request, conversation, workflow, role, mode, model, actual service tier, token usage, duration, and cost.
 - Microsoft 365 tools, opaque references, approval previews, strict approval matching, action-claim checks, and output sanitisation are unchanged.
 
@@ -35,7 +35,7 @@ Prepared: 31 August 2026
 
 ## 3. Why this policy
 
-**CONFIRMED**: The USD 5 cap makes unrestricted flagship use inappropriate. Luna costs a small fraction of Sol and is suitable for frequent routine work. Sol is reserved for requests where ambiguity, consequences, drafting quality, or multi-factor reasoning justify its higher price.
+**CONFIRMED**: The USD 10 cap keeps flagship use bounded. Luna remains suitable for frequent routine work, while Sol is used where ambiguity, consequences, drafting quality, briefing quality, or multi-factor reasoning justify its higher price.
 
 **INFERRED**: This mix should provide better perceived speed and reasoning per dollar than using one model for every task. Production latency and quality telemetry are needed to quantify the benefit.
 

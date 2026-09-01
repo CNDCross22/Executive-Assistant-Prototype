@@ -10,6 +10,7 @@ import {
   type DirectoryPerson,
   type MentionQuery,
 } from '../lib/mentions';
+import LoadingScreen from '../components/LoadingScreen';
 
 const LIVE_OPENERS = [
   'What needs me today?',
@@ -53,10 +54,12 @@ export default function Assistant({
   const [peopleLoading, setPeopleLoading] = useState(false);
   const [peopleError, setPeopleError] = useState(false);
   const [activePerson, setActivePerson] = useState(0);
+  const [loadedConversationId, setLoadedConversationId] = useState<string | null>(null);
+  const [threadLoading, setThreadLoading] = useState(false);
+  const [threadError, setThreadError] = useState(false);
 
   const endRef = useRef<HTMLDivElement>(null);
   const inputRef = useRef<HTMLTextAreaElement>(null);
-  const loadedFor = useRef<string | null>(null);
   const sendRef = useRef<(text: string) => Promise<void>>(async () => {});
 
   const mentionQuery = mention?.query ?? '';
@@ -103,15 +106,20 @@ export default function Assistant({
 
   // Load a thread when the shell switches to one.
   useEffect(() => {
-    if (activeId === loadedFor.current) return;
-    loadedFor.current = activeId;
+    if (activeId === loadedConversationId) return;
 
     if (!activeId) {
       setTurns([]);
+      setLoadedConversationId(null);
+      setThreadLoading(false);
+      setThreadError(false);
       return;
     }
 
     let cancelled = false;
+    setTurns([]);
+    setThreadLoading(true);
+    setThreadError(false);
     void (async () => {
       try {
         const data = await api.get<{ messages: StoredMessage[] }>(`/api/conversations/${activeId}`);
@@ -127,15 +135,22 @@ export default function Assistant({
             durationMs: m.durationMs,
           })),
         );
+        setLoadedConversationId(activeId);
       } catch {
-        if (!cancelled) setTurns([]);
+        if (!cancelled) {
+          setTurns([]);
+          setLoadedConversationId(activeId);
+          setThreadError(true);
+        }
+      } finally {
+        if (!cancelled) setThreadLoading(false);
       }
     })();
 
     return () => {
       cancelled = true;
     };
-  }, [activeId]);
+  }, [activeId, loadedConversationId]);
 
   /**
    * Play a scripted exchange so the chat can be seen populated before there
@@ -184,7 +199,7 @@ export default function Assistant({
         conversationId: activeId ?? undefined,
       });
 
-      loadedFor.current = res.conversationId;
+      setLoadedConversationId(res.conversationId);
       onConversationStarted(res.conversationId);
 
       setTurns((t) => [
@@ -246,6 +261,33 @@ export default function Assistant({
       inputRef.current?.focus();
       inputRef.current?.setSelectionRange(inserted.caret, inserted.caret);
     });
+  }
+
+  if (threadLoading || activeId !== loadedConversationId) {
+    return <LoadingScreen message="Opening conversation" detail="Loading the complete thread…" />;
+  }
+
+  if (threadError) {
+    return (
+      <div className="flex h-full items-center justify-center px-6">
+        <div className="panel max-w-md rounded-xl p-8 text-center shadow-sm">
+          <p className="label mb-3">Could not load</p>
+          <h1 className="h-display mb-3 text-2xl">This conversation is unavailable</h1>
+          <p className="mb-6" style={{ color: 'var(--muted)' }}>
+            The previous thread was cleared so it could not be mistaken for this one.
+          </p>
+          <button
+            className="btn"
+            onClick={() => {
+              setThreadError(false);
+              setLoadedConversationId(null);
+            }}
+          >
+            Try again
+          </button>
+        </div>
+      </div>
+    );
   }
 
   return (

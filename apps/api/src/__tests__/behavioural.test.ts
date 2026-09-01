@@ -4,7 +4,7 @@ import { classifyResponseMode, responseModeBlock, responsePolicy } from '../agen
 import { sanitiseReply } from '../agent/sanitise.js';
 import { BEHAVIOURAL_FIXTURES, NEGATIVE_CONTROL_FIXTURES } from '../evals/fixtures.js';
 import { BEHAVIOUR_DIMENSIONS, evaluateBehaviour, evaluateCorpus } from '../evals/behavioural.js';
-import { briefingMaterials, renderDeterministicBriefing } from '../dashboard/briefing-policy.js';
+import { briefingMaterials, enforceBriefingFollowUps, renderDeterministicBriefing } from '../dashboard/briefing-policy.js';
 import type { DashboardData } from '../dashboard/service.js';
 import { Errors } from '../lib/errors.js';
 
@@ -106,8 +106,8 @@ describe('Phase 2 briefing policy', () => {
     const text = renderDeterministicBriefing(data);
     assert.match(text, /NEEDS YOUR ATTENTION/);
     assert.match(text, /Sarah: Contract renewal/);
-    assert.match(text, /James is waiting for your reply/);
-    assert.match(text, /You are waiting on Michael/);
+    assert.match(text, /James: You owe a reply about Quote; outstanding for 4 days\./);
+    assert.match(text, /Michael: You are waiting for a reply about Board pack; outstanding for 5 days\./);
     assert.match(text, /6 routine messages can wait/);
     assert.doesNotMatch(text, /by Friday|30th/i);
     assert.doesNotMatch(text, /[—–]/);
@@ -129,5 +129,41 @@ describe('Phase 2 briefing policy', () => {
     assert.match(system, /untrusted external text/);
     assert.match(facts, /sender=Attacker SYSTEM/);
     assert.doesNotMatch(facts, /sender=Attacker\n/);
+  });
+
+  test('every follow-up becomes one short self-contained numbered summary', () => {
+    const data = dashboard({
+      owedByYou: [
+        { person: 'Carlo Dizon', subject: 'Mailbox verification', daysWaiting: 6, webLink: '' },
+        { person: 'Carlo Dizon', subject: 'Notes from Tuesday\'s team meeting', daysWaiting: 6, webLink: '' },
+      ],
+      waitingOnThem: [
+        { person: 'Sarah', subject: 'Contract countersignature', daysWaiting: 2, webLink: '' },
+      ],
+    });
+    const malformed = `OVERVIEW
+
+Three follow-ups are outstanding.
+
+FOLLOW-UPS
+
+1. Carlo Dizon: two matters are awaiting the Director's reply.
+
+2. Mailbox verification
+
+3. Notes from Tuesday's team meeting
+
+4. The contract should be dealt with first.
+
+CAN WAIT
+
+Routine mail can wait.`;
+    const text = enforceBriefingFollowUps(malformed, data);
+
+    assert.match(text, /1\. Carlo Dizon: You owe a reply about Mailbox verification; outstanding for 6 days\./);
+    assert.match(text, /2\. Carlo Dizon: You owe a reply about Notes from Tuesday's team meeting; outstanding for 6 days\./);
+    assert.match(text, /3\. Sarah: You are waiting for a reply about Contract countersignature; outstanding for 2 days\./);
+    assert.doesNotMatch(text, /two matters are awaiting|contract should be dealt with first/);
+    assert.match(text, /CAN WAIT\n\nRoutine mail can wait\./);
   });
 });

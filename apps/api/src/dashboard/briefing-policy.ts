@@ -10,6 +10,72 @@ function countWord(count: number): string {
   return ['No', 'One', 'Two', 'Three', 'Four', 'Five', 'Six'][count] ?? String(count);
 }
 
+function followUpLines(data: DashboardData): string[] {
+  return [
+    ...data.owedByYou.map((item) =>
+      `${oneLine(item.person, 80)}: You owe a reply about ${oneLine(item.subject, 100)}; ` +
+      `outstanding for ${item.daysWaiting} ${item.daysWaiting === 1 ? 'day' : 'days'}.`,
+    ),
+    ...data.waitingOnThem.map((item) =>
+      `${oneLine(item.person, 80)}: You are waiting for a reply about ${oneLine(item.subject, 100)}; ` +
+      `outstanding for ${item.daysWaiting} ${item.daysWaiting === 1 ? 'day' : 'days'}.`,
+    ),
+  ];
+}
+
+const BRIEFING_HEADINGS = new Set([
+  'OVERVIEW',
+  'SECURITY NOTE',
+  'NEEDS YOUR ATTENTION',
+  'FOLLOW-UPS',
+  'CAN WAIT',
+]);
+
+function headingOf(line: string): string | null {
+  const normalised = line
+    .trim()
+    .replace(/^#{1,6}\s*/, '')
+    .replace(/^\*\*(.*?)\*\*$/, '$1')
+    .replace(/:\s*.*$/, '')
+    .trim()
+    .toUpperCase();
+  return BRIEFING_HEADINGS.has(normalised) ? normalised : null;
+}
+
+/**
+ * The model writes the analysis, but code owns the follow-up list shape.
+ * This prevents grouped introductions, bare subject lines and recommendations
+ * from becoming extra numbered rows in the briefing UI.
+ */
+export function enforceBriefingFollowUps(text: string, data: DashboardData): string {
+  const summaries = followUpLines(data);
+  const lines = text.replace(/\r/g, '').split('\n');
+  const sectionStart = lines.findIndex((line) => headingOf(line) === 'FOLLOW-UPS');
+
+  if (sectionStart >= 0) {
+    let sectionEnd = lines.length;
+    for (let index = sectionStart + 1; index < lines.length; index++) {
+      if (headingOf(lines[index]!) !== null) {
+        sectionEnd = index;
+        break;
+      }
+    }
+    lines.splice(
+      sectionStart,
+      sectionEnd - sectionStart,
+      ...(summaries.length
+        ? ['FOLLOW-UPS', '', ...summaries.map((summary, index) => `${index + 1}. ${summary}`), '']
+        : []),
+    );
+  } else if (summaries.length) {
+    const canWait = lines.findIndex((line) => headingOf(line) === 'CAN WAIT');
+    const insertion = ['FOLLOW-UPS', '', ...summaries.map((summary, index) => `${index + 1}. ${summary}`), ''];
+    lines.splice(canWait >= 0 ? canWait : lines.length, 0, ...insertion);
+  }
+
+  return lines.join('\n').replace(/\n{3,}/g, '\n\n').trim();
+}
+
 /** Trusted instructions plus a compact, typed snapshot of untrusted mailbox facts. */
 export function briefingMaterials(displayName: string, data: DashboardData): { system: string; facts: string } {
   const firstName = displayName.split(' ')[0] ?? displayName;
@@ -57,7 +123,7 @@ NEEDS YOUR ATTENTION
 Numbered items. Begin with the person and matter. State what the evidence supports, any stated deadline, the consequence, and the Director's decision or next step. If the snapshot has no deadline, do not invent one.
 
 FOLLOW-UPS
-Numbered items. Say explicitly whether the Director owes the reply or is waiting on the other person, and include the measured waiting time.
+Use exactly one numbered item for each FOLLOW_UP record. Every item must be one short, complete sentence that names the person, the matter, who owes the reply, and the measured waiting time. Do not group several records under one number. Do not use a bare subject line. Do not number an introduction, conclusion, or prioritisation paragraph.
 
 CAN WAIT
 Group routine filtered mail briefly. Do not list every routine item.
@@ -102,10 +168,7 @@ export function renderDeterministicBriefing(data: DashboardData): string {
     });
   }
 
-  const followUps = [
-    ...data.owedByYou.map((item) => `${oneLine(item.person)} is waiting for your reply about ${oneLine(item.subject)}, ${item.daysWaiting} days now.`),
-    ...data.waitingOnThem.map((item) => `You are waiting on ${oneLine(item.person)} about ${oneLine(item.subject)}, ${item.daysWaiting} days now.`),
-  ];
+  const followUps = followUpLines(data);
   if (followUps.length) {
     lines.push('', 'FOLLOW-UPS', '');
     followUps.forEach((item, index) => lines.push(`${index + 1}. ${item}`));

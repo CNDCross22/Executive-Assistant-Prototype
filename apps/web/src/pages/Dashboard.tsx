@@ -3,7 +3,8 @@ import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type MeResponse } from '../lib/api';
 import Card from '../components/Card';
 import MessageViewer from '../components/MessageViewer';
-import { useAction, useTick } from '../lib/hooks';
+import { useAction, useInitialLoadGate, useTick } from '../lib/hooks';
+import LoadingScreen from '../components/LoadingScreen';
 
 interface DashboardItem {
   ref: string;
@@ -186,6 +187,7 @@ export default function Dashboard({
     queryFn: () => api.get<DashboardResponse>('/api/dashboard'),
     refetchInterval: 45_000,
   });
+  const initialLoadComplete = useInitialLoadGate(isFetching);
 
   const firstName = data?.user.firstName ?? user.displayName.split(' ')[0] ?? user.displayName;
 
@@ -215,12 +217,8 @@ export default function Dashboard({
       });
   }, [filter, needsYou, search, sort]);
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <span className="label">Reading your inbox…</span>
-      </div>
-    );
+  if (isLoading || !initialLoadComplete) {
+    return <LoadingScreen message="Preparing today" detail="Reading the latest from your inbox…" />;
   }
 
   if (error || !data) {

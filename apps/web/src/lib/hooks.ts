@@ -54,6 +54,21 @@ export function useTick(ms: number): void {
 }
 
 /**
+ * Keeps cached content hidden until this mounted view's initial refresh has
+ * settled. Later background refreshes remain non-blocking once the screen has
+ * shown current data once.
+ */
+export function useInitialLoadGate(isFetching: boolean): boolean {
+  const [ready, setReady] = useState(() => !isFetching);
+
+  useEffect(() => {
+    if (!isFetching) setReady(true);
+  }, [isFetching]);
+
+  return ready;
+}
+
+/**
  * Escape closes the thing on top.
  *
  * Every overlay here — the reading pane, the mobile drawer, a delete

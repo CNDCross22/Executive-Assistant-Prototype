@@ -553,6 +553,110 @@ body,
   animation: view-in var(--slow) var(--ease) both;
 }
 
+/* --- full-screen loading boundary --------------------------------------- */
+
+.loading-screen {
+  display: grid;
+  width: 100%;
+  min-height: 100%;
+  flex: 1 1 auto;
+  place-items: center;
+  overflow: hidden;
+  padding: 32px 24px;
+  background:
+    radial-gradient(circle at 50% 42%, color-mix(in srgb, var(--brass-soft) 72%, transparent) 0, transparent 34%),
+    var(--ground);
+}
+
+.loading-screen-inner {
+  display: flex;
+  width: min(100%, 23rem);
+  flex-direction: column;
+  align-items: center;
+  gap: 16px;
+  text-align: center;
+}
+
+.loading-mark {
+  position: relative;
+  display: grid;
+  width: 64px;
+  height: 64px;
+  place-items: center;
+  border-radius: 18px;
+  background: var(--ink);
+  color: var(--ground);
+  box-shadow: var(--shadow);
+  font-family: var(--font-display);
+  font-size: 1rem;
+  font-weight: 700;
+  letter-spacing: -0.02em;
+}
+
+.loading-mark::after {
+  position: absolute;
+  inset: -8px;
+  border: 1px solid transparent;
+  border-top-color: var(--brass);
+  border-right-color: color-mix(in srgb, var(--brass) 35%, transparent);
+  border-radius: 24px;
+  content: '';
+  animation: loading-turn 1.15s linear infinite;
+}
+
+.loading-title {
+  color: var(--ink);
+  font-family: var(--font-display);
+  font-size: 1.05rem;
+  font-weight: 650;
+  letter-spacing: -0.01em;
+}
+
+.loading-detail {
+  margin-top: 3px;
+  color: var(--muted);
+  font-family: var(--font-body);
+  font-size: 0.94rem;
+}
+
+.loading-progress {
+  position: relative;
+  display: block;
+  width: 112px;
+  height: 2px;
+  overflow: hidden;
+  border-radius: 999px;
+  background: var(--line);
+}
+
+.loading-progress::after {
+  position: absolute;
+  inset: 0;
+  width: 45%;
+  border-radius: inherit;
+  background: var(--brass);
+  content: '';
+  animation: loading-slide 1.35s var(--ease) infinite;
+}
+
+@keyframes loading-turn {
+  to {
+    transform: rotate(360deg);
+  }
+}
+
+@keyframes loading-slide {
+  0% {
+    transform: translateX(-125%);
+  }
+  50% {
+    transform: translateX(90%);
+  }
+  100% {
+    transform: translateX(250%);
+  }
+}
+
 /* --- drawers and sheets --- */
 
 @keyframes slide-from-right {

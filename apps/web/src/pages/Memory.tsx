@@ -2,7 +2,8 @@ import { useMemo, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api } from '../lib/api';
 import Card from '../components/Card';
-import { useAction } from '../lib/hooks';
+import { useAction, useInitialLoadGate } from '../lib/hooks';
+import LoadingScreen from '../components/LoadingScreen';
 
 interface MemoryEntry {
   id: string;
@@ -61,10 +62,11 @@ export default function Memory() {
   const [sort, setSort] = useState<'newest' | 'oldest' | 'importance' | 'title'>('importance');
   const { run, pending, error, dismissError } = useAction();
 
-  const { data, isLoading } = useQuery({
+  const { data, isLoading, isFetching, error: loadError, refetch } = useQuery({
     queryKey: ['memory'],
     queryFn: () => api.get<MemoryResponse>('/api/memory'),
   });
+  const initialLoadComplete = useInitialLoadGate(isFetching);
 
   const refresh = () => {
     void queryClient.invalidateQueries({ queryKey: ['memory'] });
@@ -92,10 +94,23 @@ export default function Memory() {
       });
   }, [remembered, search, sort, typeFilter]);
 
-  if (isLoading) {
+  if (isLoading || !initialLoadComplete) {
+    return <LoadingScreen message="Preparing preferences" detail="Loading the latest saved rules…" />;
+  }
+
+  if (loadError || !data) {
     return (
-      <div className="flex h-full items-center justify-center">
-        <span className="label">Reading what I remember…</span>
+      <div className="flex h-full items-center justify-center px-6">
+        <div className="panel max-w-md rounded-xl p-8 text-center shadow-sm">
+          <p className="label mb-3">Could not load</p>
+          <h1 className="h-display mb-3 text-2xl">Preferences are unavailable</h1>
+          <p className="mb-6" style={{ color: 'var(--muted)' }}>
+            Nothing stale has been shown.
+          </p>
+          <button className="btn" onClick={() => void refetch()}>
+            Try again
+          </button>
+        </div>
       </div>
     );
   }

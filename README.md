@@ -104,8 +104,8 @@ Add credits to your OpenAI API account and create a key at
 
 ```dotenv
 OPENAI_API_KEY=sk-...
-OPENAI_MODEL=gpt-5-mini
-OPENAI_MONTHLY_BUDGET_USD=5
+OPENAI_MODEL=gpt-5.6-luna
+OPENAI_MONTHLY_BUDGET_USD=10
 ```
 
 Role-specific model and budget settings are documented in `docs/AI_AGENT.md`. Blank role models inherit `OPENAI_MODEL`; background model spending is disabled by default.

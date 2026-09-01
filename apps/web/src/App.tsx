@@ -3,20 +3,17 @@ import { api, type MeResponse } from './lib/api';
 import SetupScreen from './pages/SetupScreen';
 import SignIn from './pages/SignIn';
 import Workspace from './pages/Workspace';
+import LoadingScreen from './components/LoadingScreen';
+import { useInitialLoadGate } from './lib/hooks';
 
 export default function App() {
-  const { data, isLoading, error, refetch } = useQuery({
+  const { data, isLoading, isFetching, error, refetch } = useQuery({
     queryKey: ['me'],
     queryFn: () => api.get<MeResponse>('/api/auth/me'),
   });
+  const initialLoadComplete = useInitialLoadGate(isFetching);
 
-  if (isLoading) {
-    return (
-      <div className="flex h-full items-center justify-center">
-        <span className="label">Starting</span>
-      </div>
-    );
-  }
+  if (isLoading || !initialLoadComplete) return <LoadingScreen />;
 
   // The server is unreachable. Say so plainly rather than showing an empty app.
   if (error || !data) {

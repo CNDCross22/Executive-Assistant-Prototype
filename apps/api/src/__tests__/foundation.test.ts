@@ -35,6 +35,18 @@ describe('Phase 1 model policy compatibility', () => {
     assert.equal(modelPolicySummary().executive.serviceTier, serviceTierForRole('executive'));
   });
 
+  test('the balanced production profile spends extra budget on reasoning and latency', () => {
+    assert.deepEqual(modelPolicySummary(), {
+      fast: { model: 'gpt-5.6-luna', reasoningEffort: 'none', serviceTier: 'fast' },
+      executive: { model: 'gpt-5.6-sol', reasoningEffort: 'medium', serviceTier: 'fast' },
+      briefing: { model: 'gpt-5.6-sol', reasoningEffort: 'medium', serviceTier: 'fast' },
+      background: { model: 'gpt-5.6-luna', reasoningEffort: 'none', serviceTier: 'default' },
+    });
+    assert.equal(env.OPENAI_MONTHLY_BUDGET_USD, 10);
+    assert.equal(budgetUsdForCategory('interactive'), 8);
+    assert.equal(budgetUsdForCategory('briefing'), 2);
+  });
+
   test('response modes map to purpose roles and budget categories deterministically', () => {
     assert.equal(modelRoleForResponse('direct'), 'fast');
     assert.equal(modelRoleForResponse('executive'), 'executive');

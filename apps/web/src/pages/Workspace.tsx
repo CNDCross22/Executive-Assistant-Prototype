@@ -8,6 +8,8 @@ import Briefing from './Briefing';
 import Assistant from './Assistant';
 import Memory from './Memory';
 import Icon, { type IconName } from '../components/Icon';
+import LoadingScreen from '../components/LoadingScreen';
+import { useInitialLoadGate } from '../lib/hooks';
 
 const VIEWS: View[] = ['dashboard', 'briefing', 'assistant', 'memory'];
 
@@ -50,10 +52,17 @@ export default function Workspace({
     window.history.replaceState(null, '', `${window.location.pathname}${window.location.search}#/${next}`);
   }
 
-  const { data: conversationData } = useQuery({
+  const {
+    data: conversationData,
+    isLoading: conversationsLoading,
+    isFetching: conversationsFetching,
+    error: conversationsError,
+    refetch: refetchConversations,
+  } = useQuery({
     queryKey: ['conversations'],
     queryFn: () => api.get<{ conversations: ConversationSummary[] }>('/api/conversations'),
   });
+  const conversationsReady = useInitialLoadGate(conversationsFetching);
 
   const conversations = conversationData?.conversations ?? [];
 
@@ -111,6 +120,27 @@ export default function Workspace({
     onDelete: removeConversation,
     onSignOut: signOut,
   };
+
+  if (conversationsLoading || !conversationsReady) {
+    return <LoadingScreen detail="Loading navigation and conversations…" />;
+  }
+
+  if (conversationsError || !conversationData) {
+    return (
+      <div className="flex h-full items-center justify-center px-6">
+        <div className="panel max-w-md rounded-xl p-8 text-center shadow-sm">
+          <p className="label mb-3">Could not load</p>
+          <h1 className="h-display mb-3 text-2xl">Your workspace is not ready yet</h1>
+          <p className="mb-6" style={{ color: 'var(--muted)' }}>
+            I could not load your conversations. Nothing stale has been shown.
+          </p>
+          <button className="btn" onClick={() => void refetchConversations()}>
+            Try again
+          </button>
+        </div>
+      </div>
+    );
+  }
 
   return (
     <div className="flex h-full overflow-x-hidden">

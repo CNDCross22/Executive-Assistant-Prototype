@@ -1,6 +1,7 @@
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type MeResponse } from '../lib/api';
-import { useAction } from '../lib/hooks';
+import { useAction, useInitialLoadGate } from '../lib/hooks';
+import LoadingScreen from '../components/LoadingScreen';
 
 interface BriefingResponse {
   available: boolean;
@@ -22,13 +23,14 @@ const SECTION_TITLES = [
 function StructuredReport({ text }: { text: string }) {
   const headingPattern = new RegExp(`^(${SECTION_TITLES.join('|')}):?\\s*(.*)$`, 'i');
   const lines = text.replace(/\r/g, '').split('\n');
-  const sections: { title: string; blocks: string[] }[] = [];
-  let current = { title: 'OVERVIEW', blocks: [] as string[] };
+  type ReportBlock = { text: string; listItem: boolean };
+  const sections: { title: string; blocks: ReportBlock[] }[] = [];
+  let current = { title: 'OVERVIEW', blocks: [] as ReportBlock[] };
   let paragraph: string[] = [];
 
   const flushParagraph = () => {
     const value = paragraph.join(' ').trim();
-    if (value) current.blocks.push(value);
+    if (value) current.blocks.push({ text: value, listItem: false });
     paragraph = [];
   };
   const flushSection = () => {
@@ -42,12 +44,15 @@ function StructuredReport({ text }: { text: string }) {
     if (heading) {
       flushSection();
       current = { title: (heading[1] ?? 'OVERVIEW').toUpperCase(), blocks: [] };
-      if (heading[2]?.trim()) current.blocks.push(heading[2].trim());
+      if (heading[2]?.trim()) current.blocks.push({ text: heading[2].trim(), listItem: false });
     } else if (!line) {
       flushParagraph();
     } else if (/^(?:[-*•]\s+|\d+[.)]\s+)/.test(line)) {
       flushParagraph();
-      current.blocks.push(line.replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '').trim());
+      current.blocks.push({
+        text: line.replace(/^(?:[-*•]\s+|\d+[.)]\s+)/, '').trim(),
+        listItem: true,
+      });
     } else {
       paragraph.push(line);
     }
@@ -63,17 +68,20 @@ function StructuredReport({ text }: { text: string }) {
         >
           <h2>{section.title === 'FOLLOW-UPS' ? 'Follow-ups' : section.title.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())}</h2>
           <div className="report-section-body">
-            {section.blocks.map((block, index) => (
-              <div
-                className={(section.title === 'NEEDS YOUR ATTENTION' || section.title === 'FOLLOW-UPS') && section.blocks.length > 1 ? 'report-item' : ''}
-                key={`${index}-${block.slice(0, 30)}`}
-              >
-                {(section.title === 'NEEDS YOUR ATTENTION' || section.title === 'FOLLOW-UPS') && section.blocks.length > 1 && (
-                  <span className="report-number" aria-hidden>{index + 1}</span>
-                )}
-                <p>{block}</p>
-              </div>
-            ))}
+            {section.blocks.map((block, index) => {
+              const showNumber = block.listItem &&
+                (section.title === 'NEEDS YOUR ATTENTION' || section.title === 'FOLLOW-UPS');
+              const itemNumber = section.blocks.slice(0, index + 1).filter((candidate) => candidate.listItem).length;
+              return (
+                <div
+                  className={showNumber ? 'report-item' : ''}
+                  key={`${index}-${block.text.slice(0, 30)}`}
+                >
+                  {showNumber && <span className="report-number" aria-hidden>{itemNumber}</span>}
+                  <p>{block.text}</p>
+                </div>
+              );
+            })}
           </div>
         </section>
       ))}
@@ -84,14 +92,19 @@ function StructuredReport({ text }: { text: string }) {
 export default function Briefing({ user }: { user: NonNullable<MeResponse['user']> }) {
   const queryClient = useQueryClient();
   const { run, pending, error: refreshError, dismissError } = useAction();
-  const { data, isLoading, error } = useQuery({
+  const { data, isLoading, isFetching, error } = useQuery({
     queryKey: ['briefing'],
     queryFn: () => api.get<BriefingResponse>('/api/dashboard/briefing'),
     staleTime: 15 * 60 * 1000,
     refetchOnWindowFocus: false,
   });
+  const initialLoadComplete = useInitialLoadGate(isFetching);
 
   const firstName = user.displayName.split(' ')[0] ?? user.displayName;
+
+  if (isLoading || !initialLoadComplete) {
+    return <LoadingScreen message="Preparing your briefing" detail="Loading the current report…" />;
+  }
 
   return (
     <div className="scroll h-full overflow-x-hidden">

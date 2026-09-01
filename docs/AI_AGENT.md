@@ -9,28 +9,28 @@ OPENAI_API_KEY=sk-...
 OPENAI_MODEL=gpt-5.6-luna
 OPENAI_FAST_MODEL=gpt-5.6-luna
 OPENAI_EXECUTIVE_MODEL=gpt-5.6-sol
-OPENAI_BRIEFING_MODEL=gpt-5.6-luna
+OPENAI_BRIEFING_MODEL=gpt-5.6-sol
 OPENAI_BACKGROUND_MODEL=gpt-5.6-luna
 OPENAI_REASONING_EFFORT=none
 OPENAI_FAST_REASONING_EFFORT=none
-OPENAI_EXECUTIVE_REASONING_EFFORT=low
-OPENAI_BRIEFING_REASONING_EFFORT=low
+OPENAI_EXECUTIVE_REASONING_EFFORT=medium
+OPENAI_BRIEFING_REASONING_EFFORT=medium
 OPENAI_BACKGROUND_REASONING_EFFORT=none
 OPENAI_SERVICE_TIER=default
-OPENAI_FAST_SERVICE_TIER=default
+OPENAI_FAST_SERVICE_TIER=fast
 OPENAI_EXECUTIVE_SERVICE_TIER=fast
-OPENAI_BRIEFING_SERVICE_TIER=default
+OPENAI_BRIEFING_SERVICE_TIER=fast
 OPENAI_BACKGROUND_SERVICE_TIER=default
-OPENAI_MONTHLY_BUDGET_USD=5
-OPENAI_INTERACTIVE_BUDGET_USD=4.5
-OPENAI_BRIEFING_BUDGET_USD=0.5
+OPENAI_MONTHLY_BUDGET_USD=10
+OPENAI_INTERACTIVE_BUDGET_USD=8
+OPENAI_BRIEFING_BUDGET_USD=2
 OPENAI_BACKGROUND_BUDGET_USD=0
 HERMES_RESPONSE_MODES=true
 ```
 
 Create the key at https://platform.openai.com/api-keys and keep it on the API server. Never expose it through a `VITE_` environment variable, browser code, example file, log, or commit.
 
-The production policy uses Luna for routine, briefing, and reserved background work, and Sol for executive, drafting, and sensitive work. Sol uses low reasoning with Fast processing. Routine Luna calls use standard processing. The background budget remains zero, so no background model call can consume the monthly allowance. Adaptive response limits are enabled, but remain ceilings rather than length targets.
+The production policy uses Luna without extra reasoning for routine work and Sol with medium reasoning for executive, drafting, sensitive, and briefing work. Every interactive role uses Fast processing. The background budget remains zero, so no background model call can consume the monthly allowance. Adaptive response limits are enabled, but remain ceilings rather than length targets.
 
 Each turn receives a compact response contract for its selected mode. The contract controls answer shape and typical length only; it cannot grant tools, lower risk, or approve an action. Adaptive token limits remain disabled by default until model-backed evaluation demonstrates a quality and cost benefit.
 
@@ -87,7 +87,7 @@ The assistant may observe repeated patterns as proposed memories, but proposals 
 
 ## Costs and attribution
 
-Every model call is recorded in `ai_usage` with request, conversation, workflow, model role, response mode, actual service tier, purpose, iteration, token counts, cost and duration. Fast responses are charged to the internal ledger at twice the standard Sol token rates when OpenAI reports `priority` or `fast`. `OPENAI_MONTHLY_BUDGET_USD` remains the global hard stop. The recommended split reserves USD 4.50 for interactive work and USD 0.50 for briefings. Background model calls are disabled by a zero category budget until explicitly configured.
+Every model call is recorded in `ai_usage` with request, conversation, workflow, model role, response mode, actual service tier, purpose, iteration, token counts, cost and duration. Fast responses are charged to the internal ledger at twice the standard rates when OpenAI reports `priority` or `fast`. `OPENAI_MONTHLY_BUDGET_USD` remains the USD 10 global hard stop. The configured split reserves USD 8 for interactive work and USD 2 for briefings. Background model calls are disabled by a zero category budget until explicitly configured.
 
 Unknown models use the highest configured rate until their current published rate is added to `apps/api/src/ai/cost.ts`. Apply migrations through `0013_openai_responses.sql` before deploying this version.
 

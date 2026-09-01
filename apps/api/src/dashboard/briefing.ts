@@ -10,7 +10,7 @@ import { resolveModelPolicy } from '../ai/policy.js';
 import { logger } from '../lib/logger.js';
 import { createOperationContext } from '../observability/context.js';
 import { recordTelemetry } from '../observability/telemetry.js';
-import { briefingMaterials, renderDeterministicBriefing } from './briefing-policy.js';
+import { briefingMaterials, enforceBriefingFollowUps, renderDeterministicBriefing } from './briefing-policy.js';
 import type { DashboardData } from './service.js';
 
 export interface Briefing {
@@ -35,8 +35,8 @@ const MIN_REGEN_MS = 3 * 60 * 1000;
 function signatureOf(data: DashboardData): string {
   return [
     data.needsYou.map((item) => `${item.ref}:${item.subject}:${item.unread}:${Boolean(item.warning)}:${item.priorityScore}:${item.statedDeadline?.statedText ?? ''}:${item.recommendation.action}`).join('|'),
-    data.owedByYou.map((item) => `${item.person}:${item.daysWaiting}`).join('|'),
-    data.waitingOnThem.map((item) => `${item.person}:${item.daysWaiting}`).join('|'),
+    data.owedByYou.map((item) => `${item.person}:${item.subject}:${item.daysWaiting}`).join('|'),
+    data.waitingOnThem.map((item) => `${item.person}:${item.subject}:${item.daysWaiting}`).join('|'),
     data.inbox.unreadCount,
     data.inbox.filteredOut,
   ].join('#');
@@ -137,8 +137,9 @@ export async function generateBriefing(
       });
     }
 
-    const text = sanitiseReply(result.content);
-    if (!text) return deterministic(data, 'The model-written analysis was empty. This report uses the verified mailbox summary.');
+    const modelText = sanitiseReply(result.content);
+    if (!modelText) return deterministic(data, 'The model-written analysis was empty. This report uses the verified mailbox summary.');
+    const text = enforceBriefingFollowUps(modelText, data);
 
     const briefing: Briefing = { available: true, text, generatedAt: new Date().toISOString(), cached: false };
     cache.set(userId, { briefing, signature, at: Date.now() });
