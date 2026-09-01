@@ -57,6 +57,10 @@ const forwardedKeys = [
   'OPENAI_BRIEFING_BUDGET_USD',
   'OPENAI_BACKGROUND_BUDGET_USD',
   'HERMES_RESPONSE_MODES',
+  // Real-time mail. Without this the notification URL falls back to the
+  // Supabase function URL, which is correct in most deployments but must be
+  // overridable when a custom domain fronts the API.
+  'HERMES_WEBHOOK_URL',
   'SESSION_SECRET',
   'ENCRYPTION_KEY',
   'LOG_LEVEL',
@@ -79,20 +83,12 @@ Object.assign(edgeEnvironment, {
 (globalThis as typeof globalThis & { __HERMES_EDGE_ENV?: Record<string, string | undefined> })
   .__HERMES_EDGE_ENV = edgeEnvironment;
 
-const { buildApp } = await import('./hermes-api.mjs');
+// routeUrl comes from the bundle so the deployed shim uses the same
+// implementation the unit tests cover. Keeping a second copy here is what
+// allowed a wrong edit to reach production unchecked.
+const { buildApp, routeUrl } = await import('./hermes-api.mjs');
 const app = await buildApp();
-const functionPrefix = '/functions/v1/api';
-const runtimePrefix = '/api';
 
-function routeUrl(requestUrl: string): string {
-  const url = new URL(requestUrl);
-  const fullPrefixAt = url.pathname.indexOf(functionPrefix);
-  let path = fullPrefixAt >= 0 ? url.pathname.slice(fullPrefixAt + functionPrefix.length) : url.pathname;
-  if (path === runtimePrefix || path.startsWith(`${runtimePrefix}/`)) {
-    path = path.slice(runtimePrefix.length);
-  }
-  return `${path || '/'}${url.search}`;
-}
 
 Deno.serve(async (request) => {
   const routedUrl = routeUrl(request.url);

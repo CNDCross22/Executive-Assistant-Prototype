@@ -214,6 +214,57 @@ export class MailService {
     };
   }
 
+  /**
+   * Read only what changed in a folder since the last call.
+   *
+   * The delta link is an opaque Graph continuation URL. It is treated strictly
+   * as a cursor: stored, replayed, never parsed. Passing null starts a fresh
+   * enumeration, which Graph answers with the current state and a new link.
+   *
+   * Pages are followed to a bound rather than exhaustively — a first sync on a
+   * large mailbox would otherwise walk the entire folder in one request. When
+   * the bound is hit, `deltaLink` is null and `more` is true, and the caller is
+   * expected to come back for the rest.
+   */
+  async delta(input: { folder?: string; deltaLink?: string | null; maxPages?: number } = {}): Promise<{
+    messages: MailMessage[];
+    deltaLink: string | null;
+    more: boolean;
+  }> {
+    const folder = input.folder ?? 'inbox';
+    const maxPages = input.maxPages ?? 5;
+
+    let next: string | undefined = input.deltaLink ?? `/me/mailFolders/${folder}/messages/delta`;
+    const collected: GraphMessage[] = [];
+    let deltaLink: string | null = null;
+    let page = 0;
+
+    while (next && page < maxPages) {
+      const response: {
+        value?: GraphMessage[];
+        '@odata.nextLink'?: string;
+        '@odata.deltaLink'?: string;
+      } = await this.graph.request(next, {
+        // $select keeps each delta page small; the body is never needed here.
+        ...(page === 0 && !input.deltaLink ? { query: { $select: LIST_SELECT } } : {}),
+        label: 'mail.delta',
+      });
+
+      if (response.value) collected.push(...response.value);
+      deltaLink = response['@odata.deltaLink'] ?? null;
+      next = response['@odata.nextLink'];
+      page++;
+    }
+
+    return {
+      // A delta page includes removals, which carry no usable fields. Keep only
+      // rows that actually describe a message.
+      messages: collected.filter((m) => m.id && m.receivedDateTime).map((m) => this.shape(m)),
+      deltaLink,
+      more: Boolean(next),
+    };
+  }
+
   private shapeAttachment(a: GraphAttachment): MailAttachment {
     const graphType = a['@odata.type'] ?? '';
     const kind = graphType.includes('fileAttachment') ? 'file'

@@ -17,6 +17,7 @@ import {
 import { authStore } from '../auth/store.js';
 import { issueSession, clearSession, currentUser, requireAuth } from '../auth/session.js';
 import { UserService } from '../graph/user.service.js';
+import { subscribeToInbox } from '../realtime/subscriptions.js';
 
 const FLOW_COOKIE = 'hermes_flow';
 
@@ -180,6 +181,13 @@ export async function authRoutes(app: FastifyInstance): Promise<void> {
 
     await issueSession(reply, user.id);
     logger.info({ userId: user.id, email: user.email }, 'Signed in');
+
+    // Start real-time mail for this account. Deliberately not awaited: a
+    // subscription failure must never block a successful sign-in, and the
+    // scheduled renewal pass creates anything missed here.
+    void subscribeToInbox(user.id, graph).catch((err) => {
+      logger.warn({ err, userId: user.id }, 'Could not start real-time mail at sign-in');
+    });
 
     return reply.redirect(env.APP_URL);
   });

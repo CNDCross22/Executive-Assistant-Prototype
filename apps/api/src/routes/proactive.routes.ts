@@ -8,6 +8,7 @@ import { proactiveInbox, scanProactiveSnapshot } from '../proactive/engine.js';
 import { runProactiveRead } from '../proactive/runner.js';
 import { proactiveStore } from '../proactive/store.js';
 import { PROACTIVE_EVENT_TYPES } from '../proactive/types.js';
+import { realtimeAvailable } from '../realtime/subscriptions.js';
 
 const eventType = z.enum(PROACTIVE_EVENT_TYPES);
 const clock = z.string().regex(/^([01][0-9]|2[0-3]):[0-5][0-9]$/);
@@ -34,6 +35,38 @@ export async function proactiveRoutes(app: FastifyInstance): Promise<void> {
     const query = z.object({ scan: z.enum(['true', 'false']).optional() }).parse(request.query);
     if (query.scan === 'true') await scanForRequest(request);
     return proactiveInbox(request.user!.id, request.user!.timezone);
+  });
+
+  /**
+   * A cheap "has anything changed?" probe.
+   *
+   * The dashboard used to poll the full mailbox every 45 seconds, which meant
+   * roughly five Microsoft Graph list calls per tab per cycle whether or not a
+   * single message had arrived. This answers from Hermes' own tables only:
+   * no Graph call, no model, one indexed read.
+   *
+   * The client polls this frequently and refetches the expensive dashboard
+   * only when the cursor actually moves.
+   */
+  app.get('/api/proactive/cursor', { preHandler: requireAuth }, async (request, reply) => {
+    const user = request.user!;
+    const inbox = await proactiveInbox(user.id, user.timezone);
+
+    // Newest notification timestamp plus the unread count is enough to detect
+    // anything worth re-rendering, and neither reveals message content.
+    const latest = inbox.notifications
+      .map((row) => row.lastNotifiedAt ?? row.shownAt ?? '')
+      .filter(Boolean)
+      .sort()
+      .at(-1) ?? null;
+
+    reply.header('Cache-Control', 'no-store');
+    return {
+      cursor: `${latest ?? 'none'}:${inbox.unreadCount}:${inbox.notifications.length}`,
+      unreadCount: inbox.unreadCount,
+      latestAt: latest,
+      realtime: realtimeAvailable(),
+    };
   });
 
   app.post('/api/proactive/scan', { preHandler: requireAuth }, async (request) => {

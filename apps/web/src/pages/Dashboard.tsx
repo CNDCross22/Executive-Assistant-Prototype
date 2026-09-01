@@ -1,4 +1,4 @@
-import { useMemo, useState } from 'react';
+import { useEffect, useMemo, useRef, useState } from 'react';
 import { useQuery, useQueryClient } from '@tanstack/react-query';
 import { api, type MeResponse } from '../lib/api';
 import Card from '../components/Card';
@@ -185,9 +185,43 @@ export default function Dashboard({
   const { data, isLoading, error, refetch, isFetching } = useQuery({
     queryKey: ['dashboard'],
     queryFn: () => api.get<DashboardResponse>('/api/dashboard'),
-    refetchInterval: 45_000,
+    // No interval. The cheap cursor below decides when this is worth redoing.
+    refetchInterval: false,
   });
   const initialLoadComplete = useInitialLoadGate(isFetching);
+
+  /*
+    The change probe.
+
+    Polling /api/dashboard on a timer meant re-reading the mailbox from
+    Microsoft Graph every 45 seconds whether or not anything had arrived. This
+    asks Hermes' own tables instead — one indexed read, no Graph call, no
+    model — and only pulls the expensive dashboard when the cursor moves.
+
+    The result is both cheaper and faster: fifteen seconds to notice new mail
+    instead of forty-five, at a fraction of the quota.
+  */
+  const { data: cursorData } = useQuery({
+    queryKey: ['proactive-cursor'],
+    queryFn: () => api.get<{ cursor: string; unreadCount: number; realtime: boolean }>('/api/proactive/cursor'),
+    refetchInterval: 15_000,
+  });
+
+  const cursor = cursorData?.cursor;
+  const lastCursor = useRef<string | undefined>(undefined);
+
+  useEffect(() => {
+    if (!cursor) return;
+    // Record the first value without refetching; the dashboard has just loaded.
+    if (lastCursor.current === undefined) {
+      lastCursor.current = cursor;
+      return;
+    }
+    if (lastCursor.current !== cursor) {
+      lastCursor.current = cursor;
+      void refetch();
+    }
+  }, [cursor, refetch]);
 
   const firstName = data?.user.firstName ?? user.displayName.split(' ')[0] ?? user.displayName;
 

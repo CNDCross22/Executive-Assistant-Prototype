@@ -6,6 +6,7 @@ const root = process.cwd();
 const outputDirectory = path.join(root, 'supabase', 'functions', 'api');
 const soul = await readFile(path.join(root, 'soul.md'), 'utf8');
 
+
 await mkdir(outputDirectory, { recursive: true });
 await build({
   absWorkingDir: root,

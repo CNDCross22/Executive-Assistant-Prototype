@@ -37,7 +37,16 @@ export class OpenAIProvider implements AIProvider {
     readonly reasoningEffort: ReasoningEffort = 'none',
     readonly serviceTier: ServiceTier = 'default',
   ) {
-    this.client = new OpenAI({ apiKey, timeout: 180_000, maxRetries: 2 });
+    // One call must finish well inside the turn budget that contains it.
+    //
+    // This was 180s with two retries, so a single stalled call could occupy
+    // 540s — three times the orchestrator's own 180s abort and far past any
+    // serverless invocation ceiling. The turn died with nothing recoverable
+    // and the Director saw a spinner until the platform gave up.
+    //
+    // 55s with one retry keeps the worst case near two minutes, inside both
+    // the turn budget and the runtime.
+    this.client = new OpenAI({ apiKey, timeout: 55_000, maxRetries: 1 });
   }
 
   private toApiInput(messages: ChatMessage[]): ResponseInput {

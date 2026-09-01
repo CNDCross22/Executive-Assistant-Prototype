@@ -1,0 +1,52 @@
+name: CI
+
+# Runs on every pull request and every push to main. The Pages workflow runs
+# the same checks as its own gate before it deploys, so a broken commit cannot
+# reach the Director by way of a green-looking deploy.
+
+on:
+  pull_request:
+  push:
+    branches: [main]
+  workflow_dispatch:
+
+permissions:
+  contents: read
+
+concurrency:
+  group: ci-${{ github.ref }}
+  cancel-in-progress: true
+
+jobs:
+  verify:
+    name: Typecheck, tests and behavioural evals
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Typecheck all workspaces
+        run: npm run typecheck
+
+      - name: Unit and safety tests
+        run: npm test
+
+      # The behavioural suite is a release gate, not a report: it exits non-zero
+      # when a reference response regresses or a negative control stops being
+      # caught. It needs no API key and makes no model call.
+      - name: Behavioural evaluation gate
+        run: npm run eval:behaviour
+
+      - name: Build web client
+        run: npm run build --workspace=apps/web
+
+      # Boots the artefact that actually gets deployed. Catches a bundling or
+      # runtime-shim regression here rather than in front of the Director.
+      - name: Edge bundle smoke test
+        run: npm run smoke:edge
