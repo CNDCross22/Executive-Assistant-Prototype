@@ -103,7 +103,7 @@ export default function Briefing({ user }: { user: NonNullable<MeResponse['user'
   const firstName = user.displayName.split(' ')[0] ?? user.displayName;
 
   if (isLoading || !initialLoadComplete) {
-    return <LoadingScreen message="Preparing your briefing" detail="Loading the current report…" />;
+    return <LoadingScreen label="Loading briefing" />;
   }
 
   return (

@@ -264,7 +264,7 @@ export default function Assistant({
   }
 
   if (threadLoading || activeId !== loadedConversationId) {
-    return <LoadingScreen message="Opening conversation" detail="Loading the complete thread…" />;
+    return <LoadingScreen label="Opening conversation" />;
   }
 
   if (threadError) {

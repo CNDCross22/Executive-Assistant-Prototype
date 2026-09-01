@@ -122,7 +122,7 @@ export default function Workspace({
   };
 
   if (conversationsLoading || !conversationsReady) {
-    return <LoadingScreen detail="Loading navigation and conversations…" />;
+    return <LoadingScreen label="Loading conversations" />;
   }
 
   if (conversationsError || !conversationData) {

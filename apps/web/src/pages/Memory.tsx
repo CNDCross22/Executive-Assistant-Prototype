@@ -95,7 +95,7 @@ export default function Memory() {
   }, [remembered, search, sort, typeFilter]);
 
   if (isLoading || !initialLoadComplete) {
-    return <LoadingScreen message="Preparing preferences" detail="Loading the latest saved rules…" />;
+    return <LoadingScreen label="Loading preferences" />;
   }
 
   if (loadError || !data) {

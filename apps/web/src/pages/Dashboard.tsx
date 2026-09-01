@@ -218,7 +218,7 @@ export default function Dashboard({
   }, [filter, needsYou, search, sort]);
 
   if (isLoading || !initialLoadComplete) {
-    return <LoadingScreen message="Preparing today" detail="Reading the latest from your inbox…" />;
+    return <LoadingScreen label="Loading dashboard" />;
   }
 
   if (error || !data) {
