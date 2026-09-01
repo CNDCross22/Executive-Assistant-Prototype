@@ -30,6 +30,11 @@ const AUTOMATED_PATTERNS = [
   /^mailer-daemon@/i,
   /^postmaster@/i,
   /^support@.*\.(zendesk|freshdesk|intercom)\./i,
+  /(?:^|[-_.])no-?reply@/i,
+];
+
+const AUTOMATED_SENDER_NAMES = [
+  /^Microsoft 365,\s*OneDrive$/i,
 ];
 
 const BULK_SUBJECT_PATTERNS = [
@@ -44,6 +49,8 @@ const BULK_SUBJECT_PATTERNS = [
 export function looksAutomated(m: MailMessage): boolean {
   const addr = m.from?.address ?? '';
   if (AUTOMATED_PATTERNS.some((p) => p.test(addr))) return true;
+  if (AUTOMATED_SENDER_NAMES.some((p) => p.test(m.from?.name ?? ''))) return true;
+  if (/\b(?:unsubscribe|manage (?:your )?(?:email )?preferences)\b/i.test(m.bodyPreview)) return true;
   return BULK_SUBJECT_PATTERNS.some((p) => p.test(m.subject));
 }
 
@@ -160,6 +167,8 @@ export async function buildContext(mail: MailService, me: string): Promise<Triag
 
 export interface NeedsAttentionResult {
   items: TriagedMessage[];
+  /** Highest-ranked non-automated mail, even when fewer messages clear the attention threshold. */
+  rankedItems: TriagedMessage[];
   consideredCount: number;
   filteredOutCount: number;
 }
@@ -180,9 +189,11 @@ export async function needsAttention(
 
   const scored = inbox.map((m) => scoreMessage(m, ctx)).sort((a, b) => b.score - a.score);
   const kept = scored.filter((m) => m.score > 20);
+  const rankedItems = scored.filter((m) => !looksAutomated(m)).slice(0, limit);
 
   return {
     items: kept.slice(0, limit),
+    rankedItems,
     consideredCount: inbox.length,
     filteredOutCount: inbox.length - kept.length,
   };

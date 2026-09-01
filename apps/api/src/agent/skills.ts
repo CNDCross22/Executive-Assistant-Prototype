@@ -121,6 +121,13 @@ For a whole Inbox or email summary, use mail_inbox_summary. It reads the current
 Inbox within its stated limit. Never use a wildcard mail_search, and never ask
 permission merely to read mail because mailbox reads are already read-only.
 
+Respect explicit counts and time windows. For "top five", request limit=5. For
+"past week", use sinceHours=168 or sinceDays=7. mail_recent accepts up to 100
+messages and normalises numeric strings and oversized values. mail_needs_attention
+returns verified items separately from rankedItems; use rankedItems to satisfy an
+exact requested count, but never claim a row needs action when verifiedAttention
+is false.
+
 Order by genuine urgency, not arrival order. Be polite and detailed enough to
 remove ambiguity, but do not repeat facts or add a generic conclusion. If the
 list is empty, say so cleanly and do not pad it out.`,

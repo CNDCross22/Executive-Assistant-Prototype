@@ -65,6 +65,9 @@ function explicitDomains(text: string): RequestIntent['domains'] {
   if (domains.length === 0 && /\b(?:who(?:'s| is)? waiting on me|got back to me|repl(?:y|ies|ied)|respond(?:ed|ing)?|what did .{1,60} say)\b/i.test(text)) {
     domains.push('mail');
   }
+  if (domains.length === 0 && /\b(?:what|anything|show me|list).{0,40}\b(?:came in|arrived|received)\b.{0,30}\b(?:today|yesterday|recently|this (?:morning|afternoon|evening))\b/i.test(text)) {
+    domains.push('mail');
+  }
   if (domains.length === 0 && /\b(?:my day|what(?:'s| is) on (?:today|tomorrow)|today(?:'s)? schedule|tomorrow(?:'s)? schedule)\b/i.test(text)) {
     domains.push('calendar');
   }

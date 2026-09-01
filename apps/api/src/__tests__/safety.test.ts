@@ -342,6 +342,9 @@ describe('triage — deterministic ranking', () => {
   test('newsletters and no-reply senders are filtered out', () => {
     assert.equal(looksAutomated(mail({ subject: 'Weekly digest — unsubscribe any time' })), true);
     assert.equal(looksAutomated(mail({ from: { name: 'X', address: 'no-reply@vendor.com' } })), true);
+    assert.equal(looksAutomated(mail({ from: { name: 'X', address: 'microsoft-noreply@microsoft.com' } })), true);
+    assert.equal(looksAutomated(mail({ from: { name: 'Microsoft 365, OneDrive', address: 'office365@microsoft.com' } })), true);
+    assert.equal(looksAutomated(mail({ bodyPreview: 'To stop receiving this, manage your email preferences.' })), true);
     assert.equal(looksAutomated(mail({ subject: 'Board pack figures' })), false);
   });
 

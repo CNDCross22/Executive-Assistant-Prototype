@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 
 import { availableTools } from '../agent/registry.js';
 import { interpretRequest, permittedToolsForIntent, type RequestDomain, type RequestOperation } from '../agent/request-intent.js';
+import { mailRequestParameters } from '../mail/request-parameters.js';
 
 interface Scenario {
   request: string;
@@ -23,6 +24,11 @@ describe('Director request capability routing matrix', () => {
     { request: "Read Sarah's latest email.", operation: 'read', domains: ['mail'], includes: ['mail_search', 'mail_read'] },
     { request: 'Who has not replied to my emails?', operation: 'read', domains: ['mail'], includes: ['mail_follow_ups'] },
     { request: 'Which messages need my attention?', operation: 'read', domains: ['mail'], includes: ['mail_needs_attention'] },
+    { request: 'Can you check the 5 important emails to attend or reply to?', operation: 'read', domains: ['mail'], includes: ['mail_needs_attention'] },
+    { request: 'Show me the top ten priority messages from the last two weeks.', operation: 'read', domains: ['mail'], includes: ['mail_needs_attention'] },
+    { request: 'What are my emails for the past 1 week?', operation: 'read', domains: ['mail'], includes: ['mail_recent'] },
+    { request: 'List 50 unread emails from the previous 30 days.', operation: 'read', domains: ['mail'], includes: ['mail_recent'] },
+    { request: 'What came in today?', operation: 'read', domains: ['mail'], includes: ['mail_recent'] },
     { request: 'List the attachments on this email.', operation: 'read', domains: ['mail'], includes: ['mail_list_attachments'] },
     { request: 'Draft an email to the board.', operation: 'write', domains: ['mail'], includes: ['mail_create_draft'] },
     { request: 'Send an email to Carlo.', operation: 'write', domains: ['mail'], includes: ['mail_send'] },
@@ -89,6 +95,21 @@ describe('Director request capability routing matrix', () => {
       }
     });
   }
+
+  test('natural Inbox counts and time windows become bounded parameters', () => {
+    const scenarios = [
+      ['check the 5 important emails', { limit: 5, unreadOnly: false }],
+      ['show the top ten priority messages from the last two weeks', { limit: 10, sinceHours: 336, unreadOnly: false }],
+      ['what are my emails for past 1 week', { sinceHours: 168, unreadOnly: false }],
+      ['list 50 unread emails from the previous 30 days', { limit: 50, sinceHours: 720, unreadOnly: true }],
+      ['show all my emails from the last month', { limit: 100, sinceHours: 720, unreadOnly: false }],
+      ['what came in this morning', { sinceHours: 24, unreadOnly: false }],
+    ] as const;
+
+    for (const [request, expected] of scenarios) {
+      assert.deepEqual(mailRequestParameters(request), expected, request);
+    }
+  });
 
   test('the current explicit calendar request overrides earlier email context', () => {
     const history = [

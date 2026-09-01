@@ -16,6 +16,7 @@ import type { ToolContext } from './tools/types.js';
 import type { AgentResult } from './orchestrator.js';
 import { needsAttention, findFollowUps } from '../mail/triage.js';
 import { assessSuspicion } from '../mail/suspicion.js';
+import { mailRequestParameters } from '../mail/request-parameters.js';
 
 /** Join a list the way a person speaks it. */
 function naturalList(items: string[]): string {
@@ -56,6 +57,7 @@ const NEEDS_ATTENTION = [
   /what should i (look at|deal with|do)/i,
   /(catch me up|what did i miss|my day|priorit)/i,
   /anything (i should|needing|urgent)/i,
+  /\b(?:important|urgent|priority)\s+(?:emails?|messages?)\b/i,
 ];
 
 const FOLLOW_UPS = [
@@ -75,12 +77,16 @@ function matches(patterns: RegExp[], text: string): boolean {
 
 // --------------------------------------------------------------- answers ---
 
-async function answerNeedsAttention(ctx: ToolContext): Promise<AgentResult> {
+async function answerNeedsAttention(ctx: ToolContext, question: string): Promise<AgentResult> {
   const started = Date.now();
-  const result = await needsAttention(ctx.mail, ctx.me, { limit: 6, sinceHours: 72 });
+  const parameters = mailRequestParameters(question);
+  const requestedLimit = parameters.limit;
+  const sinceHours = parameters.sinceHours ?? 72;
+  const result = await needsAttention(ctx.mail, ctx.me, { limit: requestedLimit ?? 6, sinceHours });
+  const selected = requestedLimit ? result.rankedItems : result.items;
 
   const warnings: string[] = [];
-  const lines = result.items.map((m) => {
+  const lines = selected.map((m) => {
     const who = m.from?.name ?? 'Someone';
     const when = howLong(m.receivedAt);
     const flags: string[] = [];
@@ -112,7 +118,19 @@ async function answerNeedsAttention(ctx: ToolContext): Promise<AgentResult> {
   const real = lines.filter((l): l is string => l !== null);
 
   let reply: string;
-  if (real.length === 0 && warnings.length === 0) {
+  if (requestedLimit && (real.length > 0 || warnings.length > 0)) {
+    const verifiedCount = selected.filter((message) => message.score > 20).length;
+    const range = sinceHours % 168 === 0
+      ? `${sinceHours / 168} ${sinceHours === 168 ? 'week' : 'weeks'}`
+      : sinceHours % 24 === 0
+        ? `${sinceHours / 24} ${sinceHours === 24 ? 'day' : 'days'}`
+        : `${sinceHours} hours`;
+    const qualification = verifiedCount === selected.length
+      ? `All ${verifiedCount} have clear attention signals.`
+      : `${verifiedCount} ${verifiedCount === 1 ? 'has' : 'have'} clear attention signals; the rest are the next-highest ranked and are not verified as needing a reply.`;
+    const numbered = real.map((line, index) => `${index + 1}. ${line}`).join('\n\n');
+    reply = `Here are the ${selected.length} highest-ranked non-automated emails from the last ${range}. ${qualification}\n\n${numbered}`.trim();
+  } else if (real.length === 0 && warnings.length === 0) {
     reply =
       result.consideredCount === 0
         ? 'Nothing has come in over the last few days.'
@@ -220,7 +238,7 @@ export async function tryFastPath(message: string, ctx: ToolContext): Promise<Ag
 
   if (matches(UNREAD_COUNT, text)) return answerUnreadCount(ctx);
   if (matches(FOLLOW_UPS, text)) return answerFollowUps(ctx, text);
-  if (matches(NEEDS_ATTENTION, text)) return answerNeedsAttention(ctx);
+  if (matches(NEEDS_ATTENTION, text)) return answerNeedsAttention(ctx, text);
 
   return null;
 }

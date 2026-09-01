@@ -13,54 +13,96 @@ import { analyseMail, analyseThread } from '../../mail/executive.js';
  * The heavy lifting happens in the deterministic triage layer, not the model.
  */
 
+function boundedInteger(defaultValue: number, min: number, max: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? Math.min(max, Math.max(min, Math.round(numeric))) : value;
+  }, z.number().int());
+}
+
+function optionalBoundedInteger(min: number, max: number) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === '') return undefined;
+    const numeric = typeof value === 'number' ? value : Number(value);
+    return Number.isFinite(numeric) ? Math.min(max, Math.max(min, Math.round(numeric))) : value;
+  }, z.number().int().optional());
+}
+
+function flexibleBoolean(defaultValue: boolean) {
+  return z.preprocess((value) => {
+    if (value === undefined || value === null || value === '') return defaultValue;
+    if (typeof value === 'string') {
+      if (/^(?:false|no|0)$/i.test(value)) return false;
+      if (/^(?:true|yes|1)$/i.test(value)) return true;
+    }
+    return value;
+  }, z.boolean());
+}
+
 const needsAttentionTool = defineTool({
   name: 'mail_needs_attention',
   description:
     'The emails that actually require the user, ranked, with the reason each one matters. ' +
     'Use this for questions like "what needs me today", "what is important", "anything urgent". ' +
+    'When the user asks for an exact count such as "top five", rankedItems supplies that many non-automated messages; ' +
+    'rows with verifiedAttention=false must be described as lower-priority review, not as requiring action. ' +
     'Automated and bulk mail is already filtered out.',
   riskLevel: 0,
   capability: 'mail_read',
   schema: z.object({
-    limit: z.number().int().min(1).max(15).default(8),
-    sinceHours: z.number().int().min(1).max(336).default(72),
-  }),
+    limit: boundedInteger(8, 1, 25),
+    sinceHours: optionalBoundedInteger(1, 24 * 365),
+    sinceDays: optionalBoundedInteger(1, 365),
+  }).transform(({ limit, sinceHours, sinceDays }) => ({
+    limit,
+    sinceHours: sinceHours ?? (sinceDays !== undefined ? sinceDays * 24 : 72),
+  })),
   parameters: objectSchema({
-    limit: { type: 'integer', description: 'How many to return (1-15).', default: 8 },
-    sinceHours: { type: 'integer', description: 'Look back this many hours.', default: 72 },
+    limit: { type: 'integer', description: 'Requested ranked result count (1-25).', default: 8 },
+    sinceHours: { type: 'integer', description: 'Look back this many hours; use 168 for one week.', default: 72 },
+    sinceDays: { type: 'integer', description: 'Alternative lookback in days; use 7 for one week.' },
   }),
   summarise: (a) => `Checked the inbox for what needs attention (last ${a.sinceHours}h)`,
   async execute(args, ctx) {
     const result = await needsAttention(ctx.mail, ctx.me, args);
+    const shape = (m: (typeof result.rankedItems)[number]) => {
+      const suspicion = assessSuspicion([m.subject, m.bodyPreview].join(' '), m.from?.address);
+      return {
+        ref: ctx.refs.ref(m.id),
+        ...(suspicion.warning ? { SECURITY_WARNING: suspicion.warning } : {}),
+        from: m.from ? `${m.from.name} <${m.from.address}>` : 'unknown',
+        subject: m.subject,
+        receivedAt: m.receivedAt,
+        unread: !m.isRead,
+        external: m.isExternal,
+        priorityScore: m.score,
+        deterministicScore: m.deterministicScore,
+        executiveAdjustment: m.executiveAdjustment,
+        whyItMatters: m.reasons,
+        request: m.executive.request,
+        decisionRequired: m.executive.decisionRequired,
+        statedDeadline: m.executive.deadline ?? { stated: false, note: 'There is no stated deadline in the available message preview.' },
+        consequence: m.executive.consequence,
+        impacts: m.executive.impacts,
+        recommendedNextStep: m.executive.recommendation,
+        attachmentStatus: m.executive.attachments === 'present'
+          ? 'An attachment is present but has not been inspected.'
+          : 'No attachment is indicated.',
+        preview: m.bodyPreview.slice(0, 220),
+      };
+    };
     return {
       considered: result.consideredCount,
       filteredOut: result.filteredOutCount,
-      items: result.items.map((m) => {
-        const suspicion = assessSuspicion([m.subject, m.bodyPreview].join(' '), m.from?.address);
-        return {
-          ref: ctx.refs.ref(m.id),
-          ...(suspicion.warning ? { SECURITY_WARNING: suspicion.warning } : {}),
-          from: m.from ? `${m.from.name} <${m.from.address}>` : 'unknown',
-          subject: m.subject,
-          receivedAt: m.receivedAt,
-          unread: !m.isRead,
-          external: m.isExternal,
-          priorityScore: m.score,
-          deterministicScore: m.deterministicScore,
-          executiveAdjustment: m.executiveAdjustment,
-          whyItMatters: m.reasons,
-          request: m.executive.request,
-          decisionRequired: m.executive.decisionRequired,
-          statedDeadline: m.executive.deadline ?? { stated: false, note: 'There is no stated deadline in the available message preview.' },
-          consequence: m.executive.consequence,
-          impacts: m.executive.impacts,
-          recommendedNextStep: m.executive.recommendation,
-          attachmentStatus: m.executive.attachments === 'present'
-            ? 'An attachment is present but has not been inspected.'
-            : 'No attachment is indicated.',
-          preview: m.bodyPreview.slice(0, 220),
-        };
-      }),
+      verifiedAttentionCount: result.items.length,
+      items: result.items.map(shape),
+      rankedItems: result.rankedItems.map((m) => ({
+        ...shape(m),
+        verifiedAttention: m.score > 20,
+      })),
+      note:
+        'Use items for claims that mail truly needs attention. If the Director requested an exact count, use rankedItems to fill that count and clearly label rows where verifiedAttention is false as lower-priority review, not required action.',
     };
   },
 });
@@ -234,18 +276,32 @@ const recentTool = defineTool({
   riskLevel: 0,
   capability: 'mail_read',
   schema: z.object({
-    limit: z.number().int().min(1).max(25).default(10),
-    unreadOnly: z.boolean().default(false),
-  }),
+    limit: boundedInteger(10, 1, 100),
+    unreadOnly: flexibleBoolean(false),
+    sinceHours: optionalBoundedInteger(1, 24 * 365),
+    sinceDays: optionalBoundedInteger(1, 365),
+    days: optionalBoundedInteger(1, 365),
+  }).transform(({ limit, unreadOnly, sinceHours, sinceDays, days }) => ({
+    limit,
+    unreadOnly,
+    sinceHours: sinceHours ?? ((sinceDays ?? days) !== undefined ? (sinceDays ?? days)! * 24 : undefined),
+  })),
   parameters: objectSchema({
-    limit: { type: 'integer', description: 'How many.', default: 10 },
+    limit: { type: 'integer', description: 'How many messages to return (1-100).', default: 10 },
     unreadOnly: { type: 'boolean', description: 'Only unread messages.', default: false },
+    sinceHours: { type: 'integer', description: 'Optional lookback in hours; use 168 for one week.' },
+    sinceDays: { type: 'integer', description: 'Optional lookback in days; use 7 for one week.' },
   }),
-  summarise: (a) => (a.unreadOnly ? 'Listed unread email' : 'Listed recent email'),
+  summarise: (a) => `${a.unreadOnly ? 'Listed unread email' : 'Listed recent email'}${a.sinceHours ? ` from the last ${a.sinceHours}h` : ''}`,
   async execute(args, ctx) {
-    const messages = await ctx.mail.list({ limit: args.limit, unreadOnly: args.unreadOnly });
+    const since = args.sinceHours
+      ? new Date(Date.now() - args.sinceHours * 3_600_000).toISOString()
+      : undefined;
+    const messages = await ctx.mail.list({ limit: args.limit, unreadOnly: args.unreadOnly, since });
     return {
       count: messages.length,
+      requestedLimit: args.limit,
+      ...(args.sinceHours ? { sinceHours: args.sinceHours } : {}),
       messages: messages.map((m) => ({
         ref: ctx.refs.ref(m.id),
         from: m.from ? `${m.from.name} <${m.from.address}>` : 'unknown',

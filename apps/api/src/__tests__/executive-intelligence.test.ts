@@ -11,6 +11,8 @@ import { availableTools } from '../agent/registry.js';
 import { RefTable } from '../agent/refs.js';
 import type { ActionPreview, ToolContext } from '../agent/tools/types.js';
 import { dashboardInboxItems } from '../dashboard/service.js';
+import { tryFastPath } from '../agent/fastpath.js';
+import { DEMO_EMAIL, fixtureMailService } from '../dev/fixtures.js';
 
 const ME = 'director@company.com';
 
@@ -34,6 +36,63 @@ function event(overrides: Partial<CalendarEvent> = {}): CalendarEvent {
 }
 
 describe('Phase 4 evidence-backed email intelligence', () => {
+  test('explicit top-five attention wording returns a ranked five without padding with automated mail', async () => {
+    const ctx = { mail: fixtureMailService(), me: DEMO_EMAIL } as unknown as ToolContext;
+    const result = await tryFastPath('Can you check the 5 important emails to attend or need to reply?', ctx);
+
+    assert.ok(result);
+    assert.equal(result.model, 'direct');
+    assert.match(result.reply, /5 highest-ranked non-automated emails/i);
+    assert.match(result.reply, /clear attention signals/i);
+    assert.doesNotMatch(result.reply, /could(?:n't| not) verify five|only one/i);
+  });
+
+  test('recent-mail parameters accept aliases, strings and oversized counts without rejection', async () => {
+    const recent = availableTools().find((candidate) => candidate.name === 'mail_recent');
+    assert.ok(recent);
+    let captured: { limit?: number; unreadOnly?: boolean; since?: string } = {};
+    const ctx = {
+      mail: {
+        list: async (options: typeof captured) => {
+          captured = options;
+          return [mail()];
+        },
+      },
+      refs: new RefTable(),
+    } as unknown as ToolContext;
+    const before = Date.now();
+    const args = recent.schema.parse({ limit: '250', unreadOnly: 'false', sinceDays: '7' });
+    const result = await recent.execute(args as never, ctx) as { count: number; requestedLimit: number; sinceHours: number };
+
+    assert.equal(result.count, 1);
+    assert.equal(result.requestedLimit, 100);
+    assert.equal(result.sinceHours, 168);
+    assert.equal(captured.limit, 100);
+    assert.equal(captured.unreadOnly, false);
+    const lookback = before - Date.parse(captured.since!);
+    assert.ok(lookback >= 168 * 3_600_000 - 2_000 && lookback <= 168 * 3_600_000 + 2_000);
+  });
+
+  test('attention parameters accept day windows and clamp excessive requested counts', async () => {
+    const attention = availableTools().find((candidate) => candidate.name === 'mail_needs_attention');
+    assert.ok(attention);
+    const args = attention.schema.parse({ limit: '250', sinceDays: '14' }) as { limit: number; sinceHours: number };
+
+    assert.deepEqual(args, { limit: 25, sinceHours: 336 });
+
+    const ctx = {
+      mail: fixtureMailService(),
+      me: DEMO_EMAIL,
+      refs: new RefTable(),
+    } as unknown as ToolContext;
+    const result = await attention.execute(args as never, ctx) as {
+      verifiedAttentionCount: number;
+      rankedItems: Array<{ verifiedAttention: boolean }>;
+    };
+    assert.ok(result.verifiedAttentionCount <= result.rankedItems.length);
+    assert.ok(result.rankedItems.every((item) => typeof item.verifiedAttention === 'boolean'));
+  });
+
   test('the dashboard Inbox keeps routine messages outside the priority shortlist', () => {
     const priority = mail({ id: 'priority', subject: 'Decision needed' });
     const routine = mail({
