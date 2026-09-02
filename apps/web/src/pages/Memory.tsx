@@ -46,6 +46,22 @@ const TYPE_LABEL: Record<string, string> = {
 const EMPTY_MEMORY: MemoryEntry[] = [];
 
 /**
+ * The types worth offering on a hand-written rule.
+ *
+ * `historical` is left out deliberately: it records what happened rather than
+ * how she wants things done, and it is not hers to write.
+ */
+const ADDABLE_TYPES = [
+  { value: 'preference', label: 'Preference', hint: 'How you want things done. “Never book me before 9am.”' },
+  { value: 'working_style', label: 'Working style', hint: 'How you operate. “I read email first thing and after lunch.”' },
+  { value: 'operational', label: 'Rule for the assistant', hint: 'How I should behave. “Always show me a draft before sending.”' },
+  { value: 'person', label: 'A person', hint: 'A fact about someone. “James is the CFO and approves spend over $5k.”' },
+  { value: 'procedural', label: 'Procedure', hint: 'How a task gets done. “Invoices go to accounts@ with the PO number in the subject.”' },
+] as const;
+
+type AddableType = (typeof ADDABLE_TYPES)[number]['value'];
+
+/**
  * Everything the assistant believes about her, and the controls to change it.
  *
  * Memory she cannot inspect is memory she cannot trust. This page exists so
@@ -60,6 +76,10 @@ export default function Memory() {
   const [search, setSearch] = useState('');
   const [typeFilter, setTypeFilter] = useState('all');
   const [sort, setSort] = useState<'newest' | 'oldest' | 'importance' | 'title'>('importance');
+  const [adding, setAdding] = useState(false);
+  const [newType, setNewType] = useState<AddableType>('preference');
+  const [newContent, setNewContent] = useState('');
+  const [newSubject, setNewSubject] = useState('');
   const { run, pending, error, dismissError } = useAction();
 
   const { data, isLoading, isFetching, error: loadError, refetch } = useQuery({
@@ -72,6 +92,31 @@ export default function Memory() {
     void queryClient.invalidateQueries({ queryKey: ['memory'] });
     void queryClient.invalidateQueries({ queryKey: ['dashboard'] });
   };
+
+  const closeAdd = () => {
+    setAdding(false);
+    setNewContent('');
+    setNewSubject('');
+    setNewType('preference');
+  };
+
+  // A fact about a person is not much use without knowing which person.
+  const canSaveNew = newContent.trim().length >= 2 && (newType !== 'person' || newSubject.trim() !== '');
+
+  const saveNew = () =>
+    void run(
+      'add',
+      () =>
+        api.post('/api/memory', {
+          type: newType,
+          content: newContent.trim(),
+          ...(newType === 'person' ? { subject: newSubject.trim() } : {}),
+        }),
+      () => {
+        closeAdd();
+        refresh();
+      },
+    );
 
   // These hooks must run during loading as well as after data arrives.
   const remembered = data?.remembered ?? EMPTY_MEMORY;
@@ -118,13 +163,20 @@ export default function Memory() {
   return (
     <div className="scroll h-full overflow-x-hidden">
       <div className="mx-auto w-full max-w-[62rem] px-4 py-6 sm:px-6">
-        <header className="mb-5">
-          <p className="label mb-1">Assistant settings</p>
-          <h1 className="h-display mb-2 text-[1.6rem] sm:text-[1.9rem]">Preferences and rules</h1>
-          <p className="max-w-xl" style={{ color: 'var(--ink-soft)' }}>
-            Review what shapes the assistant's answers. Nothing is saved unless you said it or
-            approved it, and every item remains under your control.
-          </p>
+        <header className="mb-5 flex flex-wrap items-start justify-between gap-3">
+          <div>
+            <p className="label mb-1">Assistant settings</p>
+            <h1 className="h-display mb-2 text-[1.6rem] sm:text-[1.9rem]">Preferences and rules</h1>
+            <p className="max-w-xl" style={{ color: 'var(--ink-soft)' }}>
+              Review what shapes the assistant's answers. Nothing is saved unless you said it or
+              approved it, and every item remains under your control.
+            </p>
+          </div>
+          {!adding && (
+            <button className="btn shrink-0" onClick={() => setAdding(true)}>
+              Add a preference
+            </button>
+          )}
         </header>
 
         {/* A write that failed must say so. It used to fail in total silence. */}
@@ -161,6 +213,78 @@ export default function Memory() {
         </div>
 
         <div className="flex flex-col gap-4">
+          {/* ---- written by hand ---- */}
+          {adding && (
+            <Card title="Add a preference">
+              <div className="flex flex-col gap-3">
+                <label className="flex flex-col gap-1.5">
+                  <span className="label">What should I remember?</span>
+                  <textarea
+                    className="panel w-full rounded p-2 text-[0.95rem]"
+                    rows={2}
+                    autoFocus
+                    value={newContent}
+                    placeholder={ADDABLE_TYPES.find((t) => t.value === newType)?.hint}
+                    onChange={(event) => setNewContent(event.target.value)}
+                    onKeyDown={(event) => {
+                      if (event.key === 'Escape') closeAdd();
+                      // Enter submits; Shift+Enter is a new line, as in the composer.
+                      if (event.key === 'Enter' && !event.shiftKey && canSaveNew) {
+                        event.preventDefault();
+                        saveNew();
+                      }
+                    }}
+                  />
+                </label>
+
+                <div className="grid gap-3 sm:grid-cols-2">
+                  <label className="flex flex-col gap-1.5">
+                    <span className="label">What kind of thing is it?</span>
+                    <select
+                      className="control"
+                      value={newType}
+                      onChange={(event) => setNewType(event.target.value as AddableType)}
+                    >
+                      {ADDABLE_TYPES.map((type) => (
+                        <option key={type.value} value={type.value}>{type.label}</option>
+                      ))}
+                    </select>
+                  </label>
+
+                  {newType === 'person' && (
+                    <label className="flex flex-col gap-1.5">
+                      <span className="label">Who is it about?</span>
+                      <input
+                        className="control"
+                        type="email"
+                        value={newSubject}
+                        placeholder="james@company.com"
+                        onChange={(event) => setNewSubject(event.target.value)}
+                      />
+                    </label>
+                  )}
+                </div>
+
+                <div className="flex flex-wrap items-center gap-2">
+                  <button className="btn" disabled={pending !== null || !canSaveNew} onClick={saveNew}>
+                    {pending === 'add' ? 'Saving…' : 'Save it'}
+                  </button>
+                  <button className="btn btn-quiet" onClick={closeAdd}>
+                    Cancel
+                  </button>
+                  {/*
+                    Said outright rather than inferred, so it applies at once.
+                    The observed-pattern route below still proposes and waits —
+                    the difference is worth stating where the two sit together.
+                  */}
+                  <span className="label" style={{ color: 'var(--muted)' }}>
+                    Saved straight away. You can edit or forget it at any time.
+                  </span>
+                </div>
+              </div>
+            </Card>
+          )}
+
           {/* ---- waiting on her ---- */}
           {proposed.length > 0 && (
             <Card title="Waiting for your decision" count={proposed.length}>
@@ -201,9 +325,20 @@ export default function Memory() {
           {/* ---- what it knows ---- */}
           <Card title="Saved preferences" count={visibleRemembered.length}>
             {remembered.length === 0 ? (
-              <p style={{ color: 'var(--muted)' }}>
-                Nothing yet. Tell me something like “never book me before 9” and I will keep it.
-              </p>
+              /* Both routes in, since neither is obvious from an empty list. */
+              <div style={{ color: 'var(--muted)' }}>
+                <p>Nothing yet. There are two ways to change that.</p>
+                <ul className="mt-2 flex flex-col gap-1">
+                  <li>
+                    <button className="text-action" onClick={() => setAdding(true)}>Add one here</button>
+                    {' — write the rule yourself and it applies immediately.'}
+                  </li>
+                  <li>
+                    Or tell me in a message — “never book me before 9” — and I will ask you to
+                    confirm before saving it.
+                  </li>
+                </ul>
+              </div>
             ) : visibleRemembered.length === 0 ? (
               <div className="py-6 text-center">
                 <p className="h-display">No matching preferences</p>

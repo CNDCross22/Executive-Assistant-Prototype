@@ -225,6 +225,21 @@ export function selectApplicableMemories(entries: MemoryEntry[], context?: Memor
     .slice(0, limit);
 }
 
+/**
+ * A short label for an entry saved without one.
+ *
+ * Titles are used for conflict detection and for reading back what was saved,
+ * but the preferences list shows the rule itself, so a caller who has only the
+ * rule should not have to invent a name for it. The first sentence is almost
+ * always the right label; a long one is cut at a word.
+ */
+export function titleFor(content: string): string {
+  const firstSentence = content.trim().split(/(?<=[.!?])\s+/)[0] ?? content.trim();
+  const cleaned = firstSentence.replace(/\s+/g, ' ').replace(/[.]+$/, '').trim();
+  if (cleaned.length <= 80) return cleaned || content.trim().slice(0, 80);
+  return `${cleaned.slice(0, 80).replace(/\s+\S*$/, '')}…`;
+}
+
 /** Save something. Structured keys replace the previous value rather than duplicating. */
 export async function remember(args: RememberArgs): Promise<MemoryEntry | null> {
   const entry = {
