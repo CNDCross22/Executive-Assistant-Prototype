@@ -112,6 +112,31 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * Plain text as minimal HTML, preserving the shape the author wrote.
+ *
+ * A reply body is HTML, and Graph inserts a plain-text `comment` into it
+ * verbatim — so every newline becomes ordinary whitespace and a greeting,
+ * message and sign-off collapse onto one line. Verified against the live
+ * tenant, not assumed.
+ *
+ * The text is escaped before it is given structure, so nothing in a drafted
+ * message can introduce markup.
+ */
+export function textToHtml(plain: string): string {
+  const escape = (value: string): string =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const paragraphs = plain
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => `<p>${escape(block).replace(/\n/g, '<br>')}</p>`);
+
+  return paragraphs.join('') || '<p></p>';
+}
+
 export interface ListMailOptions {
   folder?: 'inbox' | 'sentitems' | 'drafts' | 'archive' | 'deleteditems';
   limit?: number;
@@ -374,11 +399,41 @@ export class MailService {
     return { id: message.id, subject: message.subject ?? input.subject };
   }
 
-  async createReplyDraft(messageId: string, body: string): Promise<{ id: string; subject: string }> {
-    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/createReply`, {
-      method: 'POST', body: { comment: body }, label: 'mail.createReplyDraft',
+  /**
+   * Build a reply draft whose body keeps the line breaks the author wrote.
+   *
+   * Passing the text as `comment` would be one call instead of two, but Graph
+   * inserts it into an HTML body unchanged and the formatting is lost. So the
+   * draft is created empty, its own content type is read rather than assumed,
+   * and the text is formatted to match before being prepended to the quoted
+   * conversation.
+   */
+  private async buildReplyDraft(
+    messageId: string,
+    body: string,
+    replyAll: boolean,
+  ): Promise<{ id: string; subject: string }> {
+    const action = replyAll ? 'createReplyAll' : 'createReply';
+    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/${action}`, {
+      method: 'POST', label: `mail.${action}`, retry: 'never',
     });
+
+    const quoted = draft.body?.content ?? '';
+    const isHtml = (draft.body?.contentType ?? 'html').toLowerCase() === 'html';
+    const content = isHtml ? `${textToHtml(body)}${quoted}` : `${body}\n\n${quoted}`;
+
+    await this.graph.request(`/me/messages/${draft.id}`, {
+      method: 'PATCH',
+      body: { body: { contentType: isHtml ? 'HTML' : 'Text', content } },
+      label: 'mail.replyDraft.patch',
+      retry: 'never',
+    });
+
     return { id: draft.id, subject: draft.subject ?? 'Reply' };
+  }
+
+  async createReplyDraft(messageId: string, body: string): Promise<{ id: string; subject: string }> {
+    return this.buildReplyDraft(messageId, body, false);
   }
 
   async send(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }): Promise<void> {
@@ -398,18 +453,39 @@ export class MailService {
     });
   }
 
+  /**
+   * Reply, keeping the author's formatting.
+   *
+   * Built as a draft and then sent, because the one-shot endpoint only accepts
+   * a plain `comment` and loses the line breaks. Send is therefore not atomic:
+   * a failure after the draft exists leaves it in Drafts rather than sending
+   * twice, which is the safer direction to fail in.
+   */
   async reply(messageId: string, body: string, replyAll = false): Promise<void> {
-    await this.graph.request<void>(`/me/messages/${messageId}/${replyAll ? 'replyAll' : 'reply'}`, {
-      method: 'POST', body: { comment: body }, label: replyAll ? 'mail.replyAll' : 'mail.reply',
-    });
+    const draft = await this.buildReplyDraft(messageId, body, replyAll);
+    await this.sendDraft(draft.id);
   }
 
   async forward(messageId: string, to: string[], comment: string): Promise<void> {
-    await this.graph.request<void>(`/me/messages/${messageId}/forward`, {
+    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/createForward`, {
       method: 'POST',
-      body: { comment, toRecipients: to.map((address) => ({ emailAddress: { address } })) },
-      label: 'mail.forward',
+      body: { toRecipients: to.map((address) => ({ emailAddress: { address } })) },
+      label: 'mail.createForward',
+      retry: 'never',
     });
+
+    const quoted = draft.body?.content ?? '';
+    const isHtml = (draft.body?.contentType ?? 'html').toLowerCase() === 'html';
+    const content = isHtml ? `${textToHtml(comment)}${quoted}` : `${comment}\n\n${quoted}`;
+
+    await this.graph.request(`/me/messages/${draft.id}`, {
+      method: 'PATCH',
+      body: { body: { contentType: isHtml ? 'HTML' : 'Text', content } },
+      label: 'mail.forwardDraft.patch',
+      retry: 'never',
+    });
+
+    await this.sendDraft(draft.id);
   }
 
   async sendDraft(messageId: string): Promise<void> {
