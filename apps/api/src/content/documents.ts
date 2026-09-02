@@ -1,5 +1,6 @@
 import { unzipSync, strFromU8, type UnzipFileInfo } from 'fflate';
 import { AppError } from '../lib/errors.js';
+import { logger } from '../lib/logger.js';
 import {
   extractSafeText,
   MAX_EXTERNAL_FILE_BYTES,
@@ -295,7 +296,23 @@ function readWorkbook(archive: Record<string, Uint8Array>): string {
  * never pay for it.
  */
 async function readPdf(bytes: Uint8Array, name: string): Promise<{ text: string; pages: number }> {
-  const { getDocumentProxy, extractText } = await import('unpdf');
+  // If the reader itself will not load — a runtime whose Node compatibility
+  // PDF.js does not agree with, say — that is our problem, not a fact about
+  // the Director's file. Say so in those terms rather than surfacing a module
+  // resolution error as though the document were at fault.
+  let unpdf: typeof import('unpdf');
+  try {
+    unpdf = await import('unpdf');
+  } catch (err) {
+    logger.error({ err }, 'The PDF reader could not be loaded');
+    throw new AppError(
+      503,
+      'pdf_reader_unavailable',
+      'I cannot read PDFs at the moment.',
+      'The document itself is fine; the component that reads them did not start.',
+    );
+  }
+  const { getDocumentProxy, extractText } = unpdf;
 
   let document;
   try {
