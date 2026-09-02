@@ -3,14 +3,14 @@ import { loginUrl } from '../lib/api';
 const MESSAGES: Record<string, string> = {
   wrong_tenant: 'That account belongs to a different organisation. This assistant is locked to yours.',
   not_allowed: 'Use an approved Arete Care Microsoft account to sign in.',
-  access_denied: 'Sign-in was cancelled.',
+  access_denied: 'Sign in was cancelled.',
 };
 
 export default function SignIn() {
   const params = new URLSearchParams(window.location.search);
   const error = params.get('error');
   const consent = params.get('consent');
-  const message = error ? (MESSAGES[error] ?? 'Sign-in did not complete.') : null;
+  const message = error ? (MESSAGES[error] ?? 'Sign in did not complete.') : null;
 
   return (
     <div className="flex h-full items-center justify-center px-6">
@@ -39,7 +39,7 @@ export default function SignIn() {
             role="alert"
           >
             Consent was declined, so the assistant cannot read the mailbox. An administrator needs to approve
-            the permissions before sign-in will work.
+            the permissions before sign in will work.
           </div>
         )}
 
@@ -58,7 +58,7 @@ export default function SignIn() {
         </a>
 
         <p className="label mt-10 leading-relaxed">
-          Locked to one organisation · Read-only to begin with · Nothing is sent without your approval
+          Locked to one organisation · Read only to begin with · Nothing is sent without your approval
         </p>
       </div>
     </div>

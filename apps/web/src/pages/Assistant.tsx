@@ -308,7 +308,7 @@ export default function Assistant({
               </h1>
               <p className="mb-10 max-w-md" style={{ color: 'var(--ink-soft)' }}>
                 Ask me about your inbox or who is waiting on you. I will tell you what I actually
-                find — and check with you before I change anything.
+                find, and check with you before I change anything.
               </p>
 
               <p className="label mb-3">{demo ? 'See how a reply looks' : 'Try'}</p>

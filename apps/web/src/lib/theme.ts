@@ -7,7 +7,7 @@ const STORAGE_KEY = 'hermes.theme';
 /**
  * Light is the default, deliberately.
  *
- * The system preference is NOT followed unless she has never chosen — and even
+ * The system preference is NOT followed unless she has never chosen, and even
  * then we land on light, because this is a working tool opened in daylight
  * next to Outlook, not a code editor. Her choice, once made, always wins.
  */

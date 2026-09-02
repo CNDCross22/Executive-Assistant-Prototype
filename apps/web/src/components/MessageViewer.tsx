@@ -41,7 +41,7 @@ interface FullMessage {
  * inside itself so a long email never grows the page.
  *
  * The body is rendered as TEXT, never as HTML. The API strips markup before
- * sending it — rendering a stranger's HTML in the Director's browser is an XSS
+ * sending it. Rendering a stranger's HTML in the Director's browser is an XSS
  * vector, and not having markup at all beats sanitising it.
  */
 export default function MessageViewer({

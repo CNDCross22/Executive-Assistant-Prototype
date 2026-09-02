@@ -7,7 +7,7 @@ import { ApiError } from './api';
  * Every mutation in this app used to be `api.post(...).catch(() => {})`: a
  * failed approve, dismiss or delete refetched, put the row back exactly where
  * it was, and said nothing. Silent failure is the one behaviour this product
- * cannot have — she has to be able to trust that what she sees happened.
+ * cannot have. She has to be able to trust that what she sees happened.
  *
  * `pending` also blocks the second click, so a double tap cannot fire the
  * request twice.
@@ -71,8 +71,8 @@ export function useInitialLoadGate(isFetching: boolean): boolean {
 /**
  * Escape closes the thing on top.
  *
- * Every overlay here — the reading pane, the mobile drawer, a delete
- * confirmation — could only be dismissed by finding and hitting its specific
+ * Every overlay here (the reading pane, the mobile drawer, a delete
+ * confirmation) could only be dismissed by finding and hitting its specific
  * button. Escape is what people already try first.
  */
 export function useEscape(active: boolean, onEscape: () => void): void {

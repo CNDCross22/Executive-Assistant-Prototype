@@ -20,7 +20,7 @@ function viewFromHash(): View {
 
 /**
  * The shell. Owns the sidebar, which view is showing, and which conversation
- * is open — so the dashboard and the chat can hand off to each other without
+ * is open, so the dashboard and the chat can hand off to each other without
  * either owning the other.
  */
 export default function Workspace({
@@ -95,7 +95,7 @@ export default function Workspace({
 
   /*
     This swallowed its error. She confirmed "Remove", the refetch put the
-    conversation straight back, and nothing explained why — the worst version
+    conversation straight back, and nothing explained why. The worst version
     of a silent failure, because it looks like the app ignored her.
   */
   async function removeConversation(id: string) {
@@ -182,9 +182,9 @@ export default function Workspace({
             role="status"
           >
             <span className="label" style={{ color: 'var(--clay)' }}>
-              <span className="sm:hidden">Demo data — not a real mailbox</span>
+              <span className="sm:hidden">Demo data, not a real mailbox</span>
               <span className="hidden sm:inline">
-                Demo data — a made-up mailbox, not a real Microsoft account
+                Demo data, a made up mailbox, not a real Microsoft account
               </span>
             </span>
           </div>
@@ -197,7 +197,7 @@ export default function Workspace({
             role="alert"
           >
             <span className="label" style={{ color: 'var(--clay)' }}>
-              Your Microsoft connection has lapsed — nothing can be read until you reconnect
+              Your Microsoft connection has lapsed. Nothing can be read until you reconnect
             </span>
             <a
               href={loginUrl}

@@ -188,7 +188,7 @@ export default function Message({ turn, onDecision, decisionDisabled = false }: 
                 className="label rounded px-1.5 py-0.5"
                 style={{ background: 'var(--clay-bg)', color: 'var(--clay)' }}
               >
-                Example reply — not a live answer
+                Example reply, not a live answer
               </span>
             )}
           </div>

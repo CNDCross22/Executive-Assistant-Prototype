@@ -65,7 +65,7 @@ type AddableType = (typeof ADDABLE_TYPES)[number]['value'];
  * Everything the assistant believes about her, and the controls to change it.
  *
  * Memory she cannot inspect is memory she cannot trust. This page exists so
- * that every belief is visible, editable and removable — including the ones
+ * that every belief is visible, editable and removable, including the ones
  * still waiting to be confirmed, and the patterns not yet raised.
  */
 export default function Memory() {
@@ -208,7 +208,7 @@ export default function Memory() {
             <option value="importance">Most important</option>
             <option value="newest">Newest first</option>
             <option value="oldest">Oldest first</option>
-            <option value="title">Name A–Z</option>
+            <option value="title">Name A to Z</option>
           </select>
         </div>
 
@@ -274,8 +274,8 @@ export default function Memory() {
                   </button>
                   {/*
                     Said outright rather than inferred, so it applies at once.
-                    The observed-pattern route below still proposes and waits —
-                    the difference is worth stating where the two sit together.
+                    The route for an observed pattern, below, still proposes and waits.
+                    The difference is worth stating where the two sit together.
                   */}
                   <span className="label" style={{ color: 'var(--muted)' }}>
                     Saved straight away. You can edit or forget it at any time.
@@ -331,11 +331,11 @@ export default function Memory() {
                 <ul className="mt-2 flex flex-col gap-1">
                   <li>
                     <button className="text-action" onClick={() => setAdding(true)}>Add one here</button>
-                    {' — write the rule yourself and it applies immediately.'}
+                    {': write the rule yourself and it applies immediately.'}
                   </li>
                   <li>
-                    Or tell me in a message — “never book me before 9” — and I will ask you to
-                    confirm before saving it.
+                    Or tell me in a message, such as “never book me before 9”, and I will ask you
+                    to confirm before saving it.
                   </li>
                 </ul>
               </div>
@@ -415,8 +415,8 @@ export default function Memory() {
                         {forgetting === e.id ? (
                           /*
                             Forgetting a saved rule is irreversible, and it used
-                            to happen on a single click. Deleting a chat — far
-                            less consequential — always asked. It asks now.
+                            to happen on a single click. Deleting a chat, far
+                            less consequential, always asked. It asks now.
                           */
                           <div className="mt-2 flex flex-wrap items-center gap-2">
                             <span className="text-[0.88rem]" style={{ color: 'var(--clay)' }}>
@@ -501,7 +501,7 @@ export default function Memory() {
         </div>
 
         <p className="label mt-6 text-center">
-          Nothing here comes from the contents of an email — only from what you tell me.
+          Nothing here comes from the contents of an email, only from what you tell me.
         </p>
       </div>
     </div>
