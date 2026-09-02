@@ -113,6 +113,20 @@ export function htmlToText(html: string): string {
 }
 
 /**
+ * How a drafted message body is set.
+ *
+ * Stated explicitly on every paragraph rather than left to the client. Outlook
+ * applies a theme colour to reply text, which rendered the message in a dark
+ * brown rather than black, and an unstyled paragraph inherits whatever the
+ * recipient's client decides. Inline styles are also the only kind that
+ * survive: a <style> block is stripped by most mail clients.
+ *
+ * Aptos is the current Outlook default; Calibri is the previous one and the
+ * fallback for a client that does not have Aptos.
+ */
+const BODY_STYLE = 'font-family: Aptos, Calibri, sans-serif; font-size: 11pt; color: #000000;';
+
+/**
  * Plain text as minimal HTML, preserving the shape the author wrote.
  *
  * A reply body is HTML, and Graph inserts a plain-text `comment` into it
@@ -132,9 +146,9 @@ export function textToHtml(plain: string): string {
     .split(/\n{2,}/)
     .map((block) => block.trim())
     .filter(Boolean)
-    .map((block) => `<p>${escape(block).replace(/\n/g, '<br>')}</p>`);
+    .map((block) => `<p style="${BODY_STYLE}">${escape(block).replace(/\n/g, '<br>')}</p>`);
 
-  return paragraphs.join('') || '<p></p>';
+  return paragraphs.join('') || `<p style="${BODY_STYLE}"></p>`;
 }
 
 export interface ListMailOptions {

@@ -41,8 +41,8 @@ describe('Reply and forward formatting', () => {
     const patch = calls.find((call) => call.method === 'PATCH');
     const content: string = patch?.body?.body?.content ?? '';
 
-    assert.match(content, /<p>Hi Carlo,<\/p>/, 'the greeting must stand alone');
-    assert.match(content, /<p>It is good to go\.<\/p>/, 'the message must be its own paragraph');
+    assert.match(content, /<p[^>]*>Hi Carlo,<\/p>/, 'the greeting must stand alone');
+    assert.match(content, /<p[^>]*>It is good to go\.<\/p>/, 'the message must be its own paragraph');
     assert.match(content, /Kind Regards,<br>Hermes/, 'the name belongs under the sign-off');
     // The regression: everything on one line.
     assert.doesNotMatch(content, /Hi Carlo, It is good to go/, 'line breaks were collapsed');
@@ -72,7 +72,7 @@ describe('Reply and forward formatting', () => {
     await new MailService(graph, 'aretecare.com.au').forward('m1', ['a@b.com'], BODY);
 
     const content: string = calls.find((c) => c.method === 'PATCH')?.body?.body?.content ?? '';
-    assert.match(content, /<p>Hi Carlo,<\/p>/);
+    assert.match(content, /<p[^>]*>Hi Carlo,<\/p>/);
     assert.match(content, /Kind Regards,<br>Hermes/);
   });
 
@@ -88,8 +88,8 @@ describe('Reply and forward formatting', () => {
 
 describe('Plain text to HTML', () => {
   test('blank lines become paragraphs and single newlines become breaks', () => {
-    assert.equal(textToHtml('One\n\nTwo'), '<p>One</p><p>Two</p>');
-    assert.equal(textToHtml('One\nTwo'), '<p>One<br>Two</p>');
+    assert.match(textToHtml('One\n\nTwo'), /^<p [^>]*>One<\/p><p [^>]*>Two<\/p>$/);
+    assert.match(textToHtml('One\nTwo'), /^<p [^>]*>One<br>Two<\/p>$/);
   });
 
   test('markup in the text is escaped, never rendered', () => {
@@ -100,7 +100,20 @@ describe('Plain text to HTML', () => {
   });
 
   test('empty and whitespace-only input produce a valid empty body', () => {
-    assert.equal(textToHtml(''), '<p></p>');
-    assert.equal(textToHtml('\n\n  \n'), '<p></p>');
+    assert.match(textToHtml(''), /^<p style="[^"]+"><\/p>$/);
+    assert.match(textToHtml('\n\n  \n'), /^<p style="[^"]+"><\/p>$/);
+  });
+
+  test('every paragraph states the font and colour rather than inheriting them', () => {
+    // Outlook tints reply text with a theme colour, and an unstyled paragraph
+    // takes whatever the recipient's client chooses.
+    const html = textToHtml('One\n\nTwo');
+    const styled = html.match(/<p style="[^"]*"/g) ?? [];
+    assert.equal(styled.length, 2, 'each paragraph needs its own inline style');
+    for (const tag of styled) {
+      assert.match(tag, /font-family: Aptos, Calibri, sans-serif/);
+      assert.match(tag, /font-size: 11pt/);
+      assert.match(tag, /color: #000000/);
+    }
   });
 });
