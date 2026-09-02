@@ -38,7 +38,7 @@ function untrustedText(text: string, sender?: string): Record<string, unknown> {
 
 const listAttachments = defineTool({
   name: 'mail_list_attachments',
-  description: 'List attachment names, types and sizes for a known email. This reads metadata only; it does not download, execute, forward or send a file. Use before trying to inspect an attachment.',
+  description: 'List attachment names, types and sizes for a known email. This reads metadata only; it does not download, execute, forward or send a file. Use before trying to inspect an attachment. The textSupported flag says whether its contents can then be read.',
   riskLevel: 0,
   capability: 'mail_read',
   schema: z.object({ messageRef: z.string().min(1) }),
@@ -50,7 +50,7 @@ const listAttachments = defineTool({
     const attachments = await ctx.mail.listAttachments(messageId);
     return {
       count: attachments.length,
-      security: 'Files were not executed or scanned for malware. Text may be inspected only for supported formats up to 5 MB.',
+      security: 'Files were not executed or scanned for malware. Text may be read only from supported formats up to 5 MB.',
       attachments: attachments.map(({ id, ...attachment }) => ({
         ref: makeRef(ctx, { kind: 'mail_attachment', messageId, attachmentId: id }),
         ...attachment,
@@ -61,7 +61,7 @@ const listAttachments = defineTool({
 
 const readAttachment = defineTool({
   name: 'mail_read_attachment_text',
-  description: 'Read bounded plain text from a supported email attachment after mail_list_attachments. Use only for text, Markdown, CSV, JSON, XML, YAML or HTML up to 5 MB. It cannot execute files, inspect Office/PDF content, scan for malware or forward attachments.',
+  description: 'Read the text of an email attachment after mail_list_attachments. Reads PDF, Word, Excel and PowerPoint documents as well as text, Markdown, CSV, JSON, XML, YAML and HTML, up to 5 MB. Long documents are paged: read again with startCharacter set to nextStartCharacter to continue. It cannot execute files, scan for malware, read scanned pages that contain no text, or forward attachments.',
   riskLevel: 0,
   capability: 'mail_read',
   schema: z.object({
@@ -74,7 +74,7 @@ const readAttachment = defineTool({
     startCharacter: { type: 'integer', minimum: 0, default: 0 },
     maxCharacters: { type: 'integer', minimum: 1, maximum: 50000, default: 20000 },
   }, ['attachmentRef']),
-  summarise: () => 'Inspected attachment text',
+  summarise: () => 'Read attachment text',
   async execute(args, ctx) {
     const ref = resolveRef(ctx, args.attachmentRef, 'mail_attachment');
     const result = await ctx.mail.readAttachmentText({
@@ -175,7 +175,7 @@ const siteFiles = defineTool({
 
 function readFileTool(source: 'onedrive' | 'sharepoint', capability: string) {
   return defineTool({
-    name: `${source}_read_text`, description: `Read bounded plain text from a supported ${source === 'onedrive' ? 'OneDrive' : 'SharePoint'} file reference. Read-only. Supports text, Markdown, CSV, JSON, XML, YAML and HTML up to 5 MB; cannot execute files, scan for malware, or read Office/PDF formats.`,
+    name: `${source}_read_text`, description: `Read the text of a ${source === 'onedrive' ? 'OneDrive' : 'SharePoint'} file reference. Read-only. Reads PDF, Word, Excel and PowerPoint documents as well as text, Markdown, CSV, JSON, XML, YAML and HTML, up to 5 MB. Long documents are paged: read again with startCharacter set to nextStartCharacter to continue. It cannot execute files, scan for malware, or read scanned pages that contain no text.`,
     riskLevel: 0, capability,
     schema: z.object({ fileRef: z.string().min(1), startCharacter: z.number().int().min(0).default(0), maxCharacters: z.number().int().min(1).max(50_000).default(20_000) }),
     parameters: objectSchema({ fileRef: { type: 'string' }, startCharacter: { type: 'integer', minimum: 0, default: 0 }, maxCharacters: { type: 'integer', minimum: 1, maximum: 50000, default: 20000 } }, ['fileRef']),

@@ -77,8 +77,20 @@ export function extractSafeText(input: {
   if (/\.html?$/i.test(name) || contentType.toLowerCase().startsWith('text/html')) text = stripHtml(text);
   text = text.replace(/\r\n/g, '\n').replace(/\u0000/g, '').trim();
 
-  const start = Math.min(Math.max(input.startCharacter ?? 0, 0), text.length);
-  const max = Math.min(Math.max(input.maxCharacters ?? DEFAULT_TEXT_CHARACTERS, 1), MAX_TEXT_CHARACTERS);
+  return windowText(text, input.startCharacter, input.maxCharacters);
+}
+
+/**
+ * Return a bounded window of a document's text.
+ *
+ * Everything the assistant reads from outside is paged rather than handed over
+ * whole: a caller asks for a slice and is told, in `nextStartCharacter`,
+ * whether there is more. Shared by the plain-text path and the PDF and Office
+ * extractors so a document of any format is paged identically.
+ */
+export function windowText(text: string, startCharacter?: number, maxCharacters?: number): ExtractedText {
+  const start = Math.min(Math.max(startCharacter ?? 0, 0), text.length);
+  const max = Math.min(Math.max(maxCharacters ?? DEFAULT_TEXT_CHARACTERS, 1), MAX_TEXT_CHARACTERS);
   const end = Math.min(start + max, text.length);
   return {
     text: text.slice(start, end),

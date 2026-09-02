@@ -18,7 +18,10 @@
  * guard. No real secret is needed and none is read.
  */
 import path from 'node:path';
+import { rm } from 'node:fs/promises';
 import { pathToFileURL } from 'node:url';
+import { build as esbuild } from 'esbuild';
+import { zipSync } from 'fflate';
 
 const bundle = path.resolve('supabase/functions/api/hermes-api.mjs');
 
@@ -80,7 +83,67 @@ for (const [method, url, payload, expected, why] of checks) {
 
 await app.close();
 
+// --- attachment reading, through a real bundle -------------------------------
+//
+// PDF.js and the ZIP reader are pulled in lazily, so booting the API bundle
+// above proves nothing about them: those modules are never evaluated unless a
+// document is actually opened. That is exactly the shape of the last
+// deployment failure, where a check passed because it bypassed the code it was
+// meant to cover. So bundle the extractor on its own and put a real PDF and a
+// real .docx through it.
+const extractorBundle = path.resolve('supabase/functions/api/.smoke-documents.mjs');
+await esbuild({
+  absWorkingDir: process.cwd(),
+  entryPoints: ['./apps/api/src/content/documents.ts'],
+  outfile: extractorBundle,
+  bundle: true,
+  format: 'esm',
+  platform: 'node',
+  target: 'node22',
+  sourcemap: false,
+  legalComments: 'none',
+  banner: {
+    js: "import { createRequire as __hermesCreateRequire } from 'node:module'; const require = __hermesCreateRequire(import.meta.url);",
+  },
+});
+
+const { extractDocumentText } = await import(pathToFileURL(extractorBundle).href);
+const utf8 = (value) => new TextEncoder().encode(value);
+
+const stream = 'BT /F1 12 Tf 72 700 Td (Invoice 4417 total 12,480.00 AUD) Tj ET';
+const pdf = utf8(
+  '%PDF-1.4\n' +
+  '1 0 obj<</Type/Catalog/Pages 2 0 R>>endobj\n' +
+  '2 0 obj<</Type/Pages/Kids[3 0 R]/Count 1>>endobj\n' +
+  '3 0 obj<</Type/Page/Parent 2 0 R/MediaBox[0 0 612 792]/Contents 4 0 R>>endobj\n' +
+  `4 0 obj<</Length ${stream.length}>>stream\n${stream}\nendstream endobj\n` +
+  'trailer<</Root 1 0 R/Size 5>>\n%%EOF',
+);
+const docx = zipSync({
+  'word/document.xml': utf8(
+    '<?xml version="1.0"?><w:document xmlns:w="w"><w:body>' +
+    '<w:p><w:r><w:t>Service Agreement</w:t></w:r></w:p></w:body></w:document>',
+  ),
+});
+
+for (const [label, input, expected] of [
+  ['PDF text extraction', { bytes: pdf, name: 'invoice.pdf' }, /Invoice 4417/],
+  ['Word text extraction', { bytes: docx, name: 'agreement.docx' }, /Service Agreement/],
+]) {
+  try {
+    const { text } = await extractDocumentText(input);
+    const ok = expected.test(text);
+    if (!ok) failures++;
+    console.log(`  ${ok ? 'ok  ' : 'FAIL'} ${label.padEnd(35)} read ${JSON.stringify(text.slice(0, 48))}`);
+  } catch (error) {
+    failures++;
+    console.log(`  FAIL ${label.padEnd(35)} threw: ${error instanceof Error ? error.message : String(error)}`);
+  }
+}
+
+await rm(extractorBundle, { force: true });
+
 console.log(failures === 0
-  ? '\nEdge bundle boots and routes correctly.'
+  ? '\nEdge bundle boots, routes correctly and reads attachments.'
   : `\n${failures} check(s) failed. Do not deploy this bundle.`);
 process.exit(failures === 0 ? 0 : 1);

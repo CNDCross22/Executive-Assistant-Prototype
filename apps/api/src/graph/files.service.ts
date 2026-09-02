@@ -1,4 +1,5 @@
-import { extractSafeText, MAX_EXTERNAL_FILE_BYTES, safeFileName, supportsTextExtraction, type ExtractedText } from '../content/safe-text.js';
+import { MAX_EXTERNAL_FILE_BYTES, safeFileName } from '../content/safe-text.js';
+import { extractDocumentText, supportsExtraction, SUPPORTED_FORMATS_SENTENCE, type ExtractedDocument } from '../content/documents.js';
 import type { GraphClient } from './client.js';
 
 export interface FileSummary {
@@ -46,7 +47,7 @@ export class FilesService {
       webUrl: item.webUrl ?? '',
       kind,
       mimeType,
-      textSupported: kind === 'file' && supportsTextExtraction(name, mimeType),
+      textSupported: kind === 'file' && supportsExtraction(name, mimeType),
     };
   }
 
@@ -101,19 +102,19 @@ export class FilesService {
     itemId: string;
     startCharacter?: number;
     maxCharacters?: number;
-  }): Promise<FileSummary & ExtractedText> {
+  }): Promise<FileSummary & ExtractedDocument> {
     const item = await this.graph.request<GraphDriveItem>(
       `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}`,
       { query: { $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,package,parentReference' }, label: 'files.item.metadata' },
     );
     const metadata = this.shape(item, input.driveId);
-    if (!metadata.textSupported) throw new Error(`I cannot safely extract text from ${metadata.name}.`);
+    if (!metadata.textSupported) throw new Error(`I cannot read ${metadata.name}. ${SUPPORTED_FORMATS_SENTENCE}`);
     if (metadata.size > MAX_EXTERNAL_FILE_BYTES) throw new Error(`${metadata.name} is larger than the 5 MB inspection limit.`);
     const content = await this.graph.requestBytes(
       `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}/content`,
       { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'files.item.content' },
     );
-    const extracted = extractSafeText({
+    const extracted = await extractDocumentText({
       bytes: content.bytes,
       name: metadata.name,
       contentType: metadata.mimeType || content.contentType,
