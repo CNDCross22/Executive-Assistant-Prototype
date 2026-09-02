@@ -9,7 +9,7 @@
  * useful even when the model is unreachable, out of budget, or slow.
  */
 import type { MailMessage, MailService } from '../graph/mail.service.js';
-import { needsAttention, findFollowUps, looksAutomated } from '../mail/triage.js';
+import { needsAttentionFrom, followUpsFrom, loadMailSnapshot, looksAutomated } from '../mail/triage.js';
 import { assessSuspicion } from '../mail/suspicion.js';
 import { listMemory } from '../memory/store.js';
 import type { ExecutiveImpact, RecommendedAction } from '../mail/executive.js';
@@ -114,12 +114,17 @@ export async function buildDashboard(
   const startOfToday = new Date();
   startOfToday.setHours(0, 0, 0, 0);
 
-  const [attention, followUps, inboxMessages, memory] = await Promise.all([
-    needsAttention(mail, me, { limit: 6, sinceHours: 72 }),
-    findFollowUps(mail, me, { minDays: 3, limit: 5 }),
-    mail.list({ folder: 'inbox', limit: 100 }).catch(() => []),
+  // One read of Inbox and Sent, shared by everything below. This used to be
+  // five list calls — Sent twice and Inbox three times — on a view that
+  // refreshes while a tab is open.
+  const [snapshot, memory] = await Promise.all([
+    loadMailSnapshot(mail),
     listMemory(userId).catch(() => []),
   ]);
+
+  const attention = needsAttentionFrom(snapshot, me, { limit: 6, sinceHours: 72 });
+  const followUps = followUpsFrom(snapshot, me, { minDays: 3, limit: 5 });
+  const inboxMessages = snapshot.inbox;
 
   const needsYou: DashboardItem[] = attention.items.map((m, i) => {
     const suspicion = assessSuspicion([m.subject, m.bodyPreview].join(' '), m.from?.address);

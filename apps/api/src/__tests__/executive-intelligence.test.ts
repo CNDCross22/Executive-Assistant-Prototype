@@ -129,6 +129,12 @@ describe('Phase 4 evidence-backed email intelligence', () => {
       mail: {
         list: async () => listed,
         get: async () => ({ ...listed[0]!, body: 'Please approve the revised contract by Friday.', bodyType: 'text' as const }),
+        // The summary now reads every message in one batched request rather
+        // than one at a time.
+        getMany: async (ids: string[]) => new Map(ids.map((id) => [
+          id,
+          { ...listed[0]!, body: 'Please approve the revised contract by Friday.', bodyType: 'text' as const },
+        ])),
       },
     } as unknown as ToolContext;
     const args = tool.schema.parse({ limit: 20, unreadOnly: false });

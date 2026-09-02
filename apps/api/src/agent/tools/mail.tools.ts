@@ -333,20 +333,12 @@ const inboxSummaryTool = defineTool({
   summarise: (a) => a.unreadOnly ? 'Read unread Inbox messages for a summary' : 'Read Inbox messages for a summary',
   async execute(args, ctx) {
     const listed = await ctx.mail.list({ limit: args.limit, unreadOnly: args.unreadOnly });
-    const rows: Array<{ listed: (typeof listed)[number]; detail?: Awaited<ReturnType<typeof ctx.mail.get>> }> = [];
 
-    // Bound concurrency so a modest Inbox cannot become a Graph request burst.
-    for (let offset = 0; offset < listed.length; offset += 4) {
-      const chunk = listed.slice(offset, offset + 4);
-      const read = await Promise.all(chunk.map(async (item) => {
-        try {
-          return { listed: item, detail: await ctx.mail.get(item.id) };
-        } catch {
-          return { listed: item };
-        }
-      }));
-      rows.push(...read);
-    }
+    // One batched round trip rather than twenty sequential reads. A message
+    // that cannot be read is simply absent from the map, and the row below
+    // falls back to its preview and reports contentRead: false.
+    const details = await ctx.mail.getMany(listed.map((item) => item.id));
+    const rows = listed.map((item) => ({ listed: item, detail: details.get(item.id) }));
 
     return {
       folder: 'Inbox',
