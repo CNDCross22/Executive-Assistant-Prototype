@@ -8,6 +8,7 @@ import { responsePolicy } from '../agent/response-policy.js';
 import { sanitiseReply } from '../agent/sanitise.js';
 import { resolveModelPolicy } from '../ai/policy.js';
 import { logger } from '../lib/logger.js';
+import { hasDb, requireDb } from '../db/index.js';
 import { createOperationContext } from '../observability/context.js';
 import { recordTelemetry } from '../observability/telemetry.js';
 import { briefingMaterials, enforceBriefingFollowUps, renderDeterministicBriefing } from './briefing-policy.js';
@@ -28,9 +29,66 @@ interface CacheEntry {
   at: number;
 }
 
+/**
+ * In-process cache, kept as the fast path only.
+ *
+ * On Edge every isolate has its own, so this alone meant the twenty-minute
+ * reuse rarely applied and briefings were regenerated and re-billed. The
+ * database table behind it is what actually makes the cache shared; this stays
+ * because a same-isolate hit avoids a round trip.
+ */
 const cache = new Map<string, CacheEntry>();
 const MAX_AGE_MS = 20 * 60 * 1000;
 const MIN_REGEN_MS = 3 * 60 * 1000;
+
+/** Read the shared cache. Never throws: a cache miss must not fail a briefing. */
+async function readShared(userId: string): Promise<CacheEntry | null> {
+  if (!hasDb()) return null;
+  try {
+    const rows = await requireDb()<{
+      signature: string; text: string; unavailable_reason: string | null; generated_at: Date;
+    }[]>`
+      select signature, text, unavailable_reason, generated_at
+      from briefing_cache where user_id = ${userId} limit 1
+    `;
+    const row = rows[0];
+    if (!row) return null;
+    return {
+      signature: row.signature,
+      at: row.generated_at.getTime(),
+      briefing: {
+        available: true,
+        text: row.text,
+        generatedAt: row.generated_at.toISOString(),
+        ...(row.unavailable_reason ? { unavailableReason: row.unavailable_reason } : {}),
+        cached: true,
+      },
+    };
+  } catch (err) {
+    logger.debug({ err, userId }, 'Shared briefing cache unavailable');
+    return null;
+  }
+}
+
+/** Write through to both caches. A storage failure must not lose the briefing. */
+async function writeShared(userId: string, entry: CacheEntry): Promise<void> {
+  cache.set(userId, entry);
+  if (!hasDb()) return;
+  try {
+    await requireDb()`
+      insert into briefing_cache (user_id, signature, text, unavailable_reason, generated_at)
+      values (
+        ${userId}, ${entry.signature}, ${entry.briefing.text},
+        ${entry.briefing.unavailableReason ?? null}, ${entry.briefing.generatedAt}
+      )
+      on conflict (user_id) do update set
+        signature = excluded.signature, text = excluded.text,
+        unavailable_reason = excluded.unavailable_reason, generated_at = excluded.generated_at
+    `;
+  } catch (err) {
+    logger.warn({ err, userId }, 'Could not persist the briefing cache');
+  }
+}
 
 function signatureOf(data: DashboardData): string {
   return [
@@ -64,7 +122,7 @@ export async function generateBriefing(
     source: 'briefing',
   });
   const signature = signatureOf(data);
-  const cached = cache.get(userId);
+  const cached = cache.get(userId) ?? await readShared(userId);
 
   if (!options.force && cached) {
     const age = Date.now() - cached.at;
@@ -74,7 +132,7 @@ export async function generateBriefing(
 
   if (data.needsYou.length === 0 && data.owedByYou.length === 0 && data.waitingOnThem.length === 0) {
     const briefing = deterministic(data);
-    cache.set(userId, { briefing, signature, at: Date.now() });
+    await writeShared(userId, { briefing, signature, at: Date.now() });
     void recordTelemetry({
       category: 'briefing', action: 'generated', status: 'success', userId,
       requestId: operation.requestId, workflowId: operation.workflowId,
@@ -142,7 +200,7 @@ export async function generateBriefing(
     const text = enforceBriefingFollowUps(modelText, data);
 
     const briefing: Briefing = { available: true, text, generatedAt: new Date().toISOString(), cached: false };
-    cache.set(userId, { briefing, signature, at: Date.now() });
+    await writeShared(userId, { briefing, signature, at: Date.now() });
     void recordTelemetry({
       category: 'briefing', action: 'generated', status: 'success', userId,
       requestId: operation.requestId, workflowId: operation.workflowId,

@@ -264,6 +264,56 @@ export class MailService {
   }
 
   /**
+   * Fetch several messages in full using one request.
+   *
+   * The whole-inbox summary read up to twenty messages one at a time, four in
+   * parallel, before the model had written a word. Graph's $batch carries up
+   * to twenty requests in a single round trip, which is the difference between
+   * one wait and five.
+   *
+   * A message that fails inside the batch is omitted rather than throwing: a
+   * summary of nineteen messages beats an error over one unreadable item.
+   */
+  async getMany(ids: string[]): Promise<Map<string, MailMessageDetail>> {
+    const found = new Map<string, MailMessageDetail>();
+    if (ids.length === 0) return found;
+
+    // Graph caps a batch at twenty requests.
+    for (let offset = 0; offset < ids.length; offset += 20) {
+      const chunk = ids.slice(offset, offset + 20);
+      const response = await this.graph.request<{
+        responses?: Array<{ id: string; status: number; body?: GraphMessage }>;
+      }>('/$batch', {
+        method: 'POST',
+        body: {
+          requests: chunk.map((id, index) => ({
+            id: String(index),
+            method: 'GET',
+            url: `/me/messages/${id}?$select=${LIST_SELECT},body`,
+          })),
+        },
+        label: 'mail.getMany',
+        // Reads only, so a transient failure is safe to try again.
+        retry: 'safe',
+      });
+
+      for (const item of response.responses ?? []) {
+        if (item.status !== 200 || !item.body) continue;
+        const raw = item.body.body?.content ?? '';
+        const isHtml = (item.body.body?.contentType ?? 'text').toLowerCase() === 'html';
+        const shaped = {
+          ...this.shape(item.body),
+          body: isHtml ? htmlToText(raw) : raw.trim(),
+          bodyType: (isHtml ? 'html' : 'text') as 'html' | 'text',
+        };
+        found.set(chunk[Number(item.id)]!, shaped);
+      }
+    }
+
+    return found;
+  }
+
+  /**
    * Read only what changed in a folder since the last call.
    *
    * The delta link is an opaque Graph continuation URL. It is treated strictly

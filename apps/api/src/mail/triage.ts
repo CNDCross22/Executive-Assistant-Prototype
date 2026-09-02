@@ -148,10 +148,35 @@ export function scoreMessage(m: MailMessage, ctx: TriageContext): TriagedMessage
   return { ...m, score: score + executiveAdjustment, deterministicScore, executiveAdjustment, executive, reasons };
 }
 
-/** Build the signals that make scoring accurate, from her own sent mail. */
-export async function buildContext(mail: MailService, me: string): Promise<TriageContext> {
-  const sent = await mail.list({ folder: 'sentitems', limit: 100 }).catch(() => []);
+/**
+ * One read of the mailbox, shared by everything that needs it.
+ *
+ * Triage, follow-up detection and the dashboard each used to fetch their own
+ * copies: Sent twice and Inbox three times per dashboard build, every 45
+ * seconds per open tab. They need the same two folders, so they now take a
+ * snapshot rather than each going to Graph.
+ *
+ * Deliberately not cached anywhere. Holding mailbox content in our own store
+ * to save a request would trade a bounded cost for an unbounded one.
+ */
+export interface MailSnapshot {
+  inbox: MailMessage[];
+  sent: MailMessage[];
+}
 
+export async function loadMailSnapshot(
+  mail: MailService,
+  options: { inboxLimit?: number; sentLimit?: number } = {},
+): Promise<MailSnapshot> {
+  const [inbox, sent] = await Promise.all([
+    mail.list({ folder: 'inbox', limit: options.inboxLimit ?? 100 }).catch(() => []),
+    mail.list({ folder: 'sentitems', limit: options.sentLimit ?? 100 }).catch(() => []),
+  ]);
+  return { inbox, sent };
+}
+
+/** The relevance signals, derived from sent mail already in hand. */
+export function contextFrom(sent: MailMessage[], me: string): TriageContext {
   const knownCorrespondents = new Set<string>();
   const ownThreads = new Set<string>();
 
@@ -165,6 +190,12 @@ export async function buildContext(mail: MailService, me: string): Promise<Triag
   return { me, knownCorrespondents, ownThreads };
 }
 
+/** Build the signals that make scoring accurate, from her own sent mail. */
+export async function buildContext(mail: MailService, me: string): Promise<TriageContext> {
+  const sent = await mail.list({ folder: 'sentitems', limit: 100 }).catch(() => []);
+  return contextFrom(sent, me);
+}
+
 export interface NeedsAttentionResult {
   items: TriagedMessage[];
   /** Highest-ranked non-automated mail, even when fewer messages clear the attention threshold. */
@@ -174,6 +205,35 @@ export interface NeedsAttentionResult {
 }
 
 /** What actually needs her, ranked. */
+/** Rank a snapshot already in hand. No Graph call. */
+export function needsAttentionFrom(
+  snapshot: MailSnapshot,
+  me: string,
+  options: { limit?: number; sinceHours?: number } = {},
+): NeedsAttentionResult {
+  const { limit = 8, sinceHours = 72 } = options;
+  const ctx = contextFrom(snapshot.sent, me);
+
+  // The window is applied here rather than by Graph, so the same snapshot can
+  // serve callers asking for different lookbacks.
+  const cutoff = Date.now() - sinceHours * 3_600_000;
+  const inbox = snapshot.inbox.filter((m) => {
+    const at = Date.parse(m.receivedAt);
+    return Number.isNaN(at) ? true : at >= cutoff;
+  });
+
+  const scored = inbox.map((m) => scoreMessage(m, ctx)).sort((a, b) => b.score - a.score);
+  const kept = scored.filter((m) => m.score > 20);
+  const rankedItems = scored.filter((m) => !looksAutomated(m)).slice(0, limit);
+
+  return {
+    items: kept.slice(0, limit),
+    rankedItems,
+    consideredCount: inbox.length,
+    filteredOutCount: inbox.length - kept.length,
+  };
+}
+
 export async function needsAttention(
   mail: MailService,
   me: string,
@@ -225,12 +285,21 @@ export async function findFollowUps(
   me: string,
   options: { minDays?: number; limit?: number } = {},
 ): Promise<FollowUpsResult> {
-  const { minDays = 3, limit = 10 } = options;
-
   const [sent, inbox] = await Promise.all([
     mail.list({ folder: 'sentitems', limit: 100 }),
     mail.list({ folder: 'inbox', limit: 100 }),
   ]);
+  return followUpsFrom({ inbox, sent }, me, options);
+}
+
+/** Derive follow-ups from a snapshot already in hand. No Graph call. */
+export function followUpsFrom(
+  snapshot: MailSnapshot,
+  me: string,
+  options: { minDays?: number; limit?: number } = {},
+): FollowUpsResult {
+  const { minDays = 3, limit = 10 } = options;
+  const { sent, inbox } = snapshot;
 
   const lastSent = new Map<string, MailMessage>();
   for (const m of sent) {
