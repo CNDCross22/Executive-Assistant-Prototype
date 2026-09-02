@@ -11,6 +11,10 @@ export default defineConfig({
   },
   build: {
     outDir: 'dist',
-    sourcemap: true,
+    // The Pages site is public. A source map there serves the full annotated
+    // client source, including every internal name and comment, to anyone who
+    // asks. This only affects `vite build`; the dev server keeps its own
+    // sourcemaps regardless, so nothing is lost while working locally.
+    sourcemap: false,
   },
 });

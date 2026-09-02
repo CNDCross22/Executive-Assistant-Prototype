@@ -30,7 +30,23 @@ import { assembleContext, type ContextTurn } from './context.js';
 import { interpretRequest, permittedToolsForIntent } from './request-intent.js';
 
 const MAX_ITERATIONS = 6;
-const TURN_TIMEOUT_MS = 180_000;
+
+/**
+ * The turn budget.
+ *
+ * Three ceilings govern a turn: this one, the provider's per-call timeout, and
+ * the abort signal the route arms. They must nest, or the outermost is the
+ * only one that ever fires and it fires as a platform kill rather than a
+ * handled failure.
+ *
+ *   provider call   55s x 2 attempts   (ai/openai.ts)
+ *   turn            this value
+ *   request         route signal, strictly larger (routes/assistant.routes.ts)
+ *
+ * 150s leaves room for a serverless invocation ceiling while still allowing a
+ * genuine multi-step executive turn to finish.
+ */
+const TURN_TIMEOUT_MS = 150_000;
 
 export interface AgentStep {
   tool: string;

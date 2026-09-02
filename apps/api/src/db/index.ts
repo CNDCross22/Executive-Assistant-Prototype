@@ -8,7 +8,26 @@ import { logger } from '../lib/logger.js';
  */
 let client: postgres.Sql | null = null;
 
-if (env.DATABASE_URL) {
+/**
+ * Tests must never reach a real database.
+ *
+ * `npm test` loads .env like everything else, so a developer with a working
+ * DATABASE_URL was running the suite against the live Supabase project. Reads
+ * merely made the tests slow and flaky; a test that wrote would have written
+ * to production data.
+ *
+ * Under `node --test` the connection is refused and every store falls back to
+ * memory, which is what the fallbacks exist for. An integration suite that
+ * genuinely needs Postgres opts in explicitly with HERMES_TEST_DATABASE.
+ */
+const underTest = process.env.NODE_TEST_CONTEXT !== undefined;
+const testDatabaseAllowed = process.env.HERMES_TEST_DATABASE === 'true';
+
+if (underTest && !testDatabaseAllowed) {
+  if (env.DATABASE_URL) {
+    logger.warn('Ignoring DATABASE_URL under test. Set HERMES_TEST_DATABASE=true to opt in deliberately.');
+  }
+} else if (env.DATABASE_URL) {
   client = postgres(env.DATABASE_URL, {
     // Each Edge isolate owns its own pool. One connection per isolate avoids
     // multiplying connections against Supabase's transaction pooler.

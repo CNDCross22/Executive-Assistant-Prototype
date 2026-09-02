@@ -98,7 +98,13 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
 
   // --------------------------------------------------------------- chat ---
 
-  app.post('/api/assistant/chat', { preHandler: requireAuth }, async (request) => {
+  // A chat turn can spend real money and hold a connection for minutes. It has
+  // no business sharing an allowance with /api/health. Twelve a minute is far
+  // above human conversational pace and far below a runaway client.
+  app.post('/api/assistant/chat', {
+    preHandler: requireAuth,
+    config: { rateLimit: { max: 12, timeWindow: '1 minute' } },
+  }, async (request) => {
     const { message, conversationId } = chatSchema.parse(request.body);
     const user = request.user!;
 
@@ -169,7 +175,9 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
       conversationId: id,
       requestId: operation.requestId,
       workflowId: operation.workflowId,
-      signal: AbortSignal.timeout(300_000),
+      // Strictly larger than the orchestrator's own 150s turn budget, so the
+      // turn aborts itself and reports honestly rather than being killed here.
+      signal: AbortSignal.timeout(170_000),
     };
 
     const started = Date.now();
@@ -183,6 +191,29 @@ export async function assistantRoutes(app: FastifyInstance): Promise<void> {
         requestId: operation.requestId, conversationId: id, workflowId: operation.workflowId,
         durationMs: Date.now() - started, reasonCode: 'request_error',
       });
+
+      // The question is already stored. Without this the thread keeps it
+      // forever with nothing after it, and reloading shows the Director a
+      // message she sent that was apparently ignored. Record the failure as a
+      // turn so the history stays truthful about what happened.
+      //
+      // Storing this must never mask the original error, so it is best-effort.
+      try {
+        await appendMessage({
+          conversationId: id,
+          role: 'assistant',
+          content: err instanceof AppError
+            ? `${err.message}${err.detail ? ` ${err.detail}` : ''}`
+            : 'I could not complete that request. Nothing was changed.',
+          steps: [],
+          model: 'failed',
+          durationMs: Date.now() - started,
+          wasBlocked: true,
+        });
+      } catch (storeError) {
+        logger.error({ err: storeError, conversationId: id }, 'Could not record a failed turn');
+      }
+
       throw err;
     }
 

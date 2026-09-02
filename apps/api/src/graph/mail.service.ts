@@ -112,6 +112,55 @@ export function htmlToText(html: string): string {
     .trim();
 }
 
+/**
+ * How a drafted message body is set.
+ *
+ * Stated explicitly on every paragraph rather than left to the client. Outlook
+ * applies a theme colour to reply text, which rendered the message in a dark
+ * brown rather than black, and an unstyled paragraph inherits whatever the
+ * recipient's client decides. Inline styles are also the only kind that
+ * survive: a <style> block is stripped by most mail clients.
+ *
+ * Aptos is the current Outlook default; Calibri is the previous one and the
+ * fallback for a client that does not have Aptos.
+ */
+const BODY_STYLE = [
+  'font-family: Aptos, Calibri, sans-serif',
+  'font-size: 11pt',
+  'color: #000000',
+  // The blank line between sections. Outlook injects
+  // `<style>p { margin-top:0; margin-bottom:0 }</style>` into every reply
+  // body, which collapses the gap and stacks the greeting, message and
+  // sign-off against each other. An inline declaration outranks that block,
+  // so the spacing has to be stated here to survive.
+  'margin: 0 0 11pt 0',
+].join('; ');
+
+/**
+ * Plain text as minimal HTML, preserving the shape the author wrote.
+ *
+ * A reply body is HTML, and Graph inserts a plain-text `comment` into it
+ * verbatim — so every newline becomes ordinary whitespace and a greeting,
+ * message and sign-off collapse onto one line. Verified against the live
+ * tenant, not assumed.
+ *
+ * The text is escaped before it is given structure, so nothing in a drafted
+ * message can introduce markup.
+ */
+export function textToHtml(plain: string): string {
+  const escape = (value: string): string =>
+    value.replace(/&/g, '&amp;').replace(/</g, '&lt;').replace(/>/g, '&gt;');
+
+  const paragraphs = plain
+    .replace(/\r\n/g, '\n')
+    .split(/\n{2,}/)
+    .map((block) => block.trim())
+    .filter(Boolean)
+    .map((block) => `<p style="${BODY_STYLE}">${escape(block).replace(/\n/g, '<br>')}</p>`);
+
+  return paragraphs.join('') || `<p style="${BODY_STYLE}"></p>`;
+}
+
 export interface ListMailOptions {
   folder?: 'inbox' | 'sentitems' | 'drafts' | 'archive' | 'deleteditems';
   limit?: number;
@@ -211,6 +260,57 @@ export class MailService {
       ...this.shape(m),
       body: isHtml ? htmlToText(raw) : raw.trim(),
       bodyType: isHtml ? 'html' : 'text',
+    };
+  }
+
+  /**
+   * Read only what changed in a folder since the last call.
+   *
+   * The delta link is an opaque Graph continuation URL. It is treated strictly
+   * as a cursor: stored, replayed, never parsed. Passing null starts a fresh
+   * enumeration, which Graph answers with the current state and a new link.
+   *
+   * Pages are followed to a bound rather than exhaustively — a first sync on a
+   * large mailbox would otherwise walk the entire folder in one request. When
+   * the bound is hit, `deltaLink` is null and `more` is true, and the caller is
+   * expected to come back for the rest.
+   */
+  async delta(input: { folder?: string; deltaLink?: string | null; maxPages?: number } = {}): Promise<{
+    messages: MailMessage[];
+    deltaLink: string | null;
+    more: boolean;
+  }> {
+    const folder = input.folder ?? 'inbox';
+    const maxPages = input.maxPages ?? 5;
+
+    let next: string | undefined = input.deltaLink ?? `/me/mailFolders/${folder}/messages/delta`;
+    const collected: GraphMessage[] = [];
+    let deltaLink: string | null = null;
+    let page = 0;
+
+    while (next && page < maxPages) {
+      const response: {
+        value?: GraphMessage[];
+        '@odata.nextLink'?: string;
+        '@odata.deltaLink'?: string;
+      } = await this.graph.request(next, {
+        // $select keeps each delta page small; the body is never needed here.
+        ...(page === 0 && !input.deltaLink ? { query: { $select: LIST_SELECT } } : {}),
+        label: 'mail.delta',
+      });
+
+      if (response.value) collected.push(...response.value);
+      deltaLink = response['@odata.deltaLink'] ?? null;
+      next = response['@odata.nextLink'];
+      page++;
+    }
+
+    return {
+      // A delta page includes removals, which carry no usable fields. Keep only
+      // rows that actually describe a message.
+      messages: collected.filter((m) => m.id && m.receivedDateTime).map((m) => this.shape(m)),
+      deltaLink,
+      more: Boolean(next),
     };
   }
 
@@ -323,11 +423,41 @@ export class MailService {
     return { id: message.id, subject: message.subject ?? input.subject };
   }
 
-  async createReplyDraft(messageId: string, body: string): Promise<{ id: string; subject: string }> {
-    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/createReply`, {
-      method: 'POST', body: { comment: body }, label: 'mail.createReplyDraft',
+  /**
+   * Build a reply draft whose body keeps the line breaks the author wrote.
+   *
+   * Passing the text as `comment` would be one call instead of two, but Graph
+   * inserts it into an HTML body unchanged and the formatting is lost. So the
+   * draft is created empty, its own content type is read rather than assumed,
+   * and the text is formatted to match before being prepended to the quoted
+   * conversation.
+   */
+  private async buildReplyDraft(
+    messageId: string,
+    body: string,
+    replyAll: boolean,
+  ): Promise<{ id: string; subject: string }> {
+    const action = replyAll ? 'createReplyAll' : 'createReply';
+    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/${action}`, {
+      method: 'POST', label: `mail.${action}`, retry: 'never',
     });
+
+    const quoted = draft.body?.content ?? '';
+    const isHtml = (draft.body?.contentType ?? 'html').toLowerCase() === 'html';
+    const content = isHtml ? `${textToHtml(body)}${quoted}` : `${body}\n\n${quoted}`;
+
+    await this.graph.request(`/me/messages/${draft.id}`, {
+      method: 'PATCH',
+      body: { body: { contentType: isHtml ? 'HTML' : 'Text', content } },
+      label: 'mail.replyDraft.patch',
+      retry: 'never',
+    });
+
     return { id: draft.id, subject: draft.subject ?? 'Reply' };
+  }
+
+  async createReplyDraft(messageId: string, body: string): Promise<{ id: string; subject: string }> {
+    return this.buildReplyDraft(messageId, body, false);
   }
 
   async send(input: { to: string[]; cc?: string[]; bcc?: string[]; subject: string; body: string }): Promise<void> {
@@ -347,18 +477,39 @@ export class MailService {
     });
   }
 
+  /**
+   * Reply, keeping the author's formatting.
+   *
+   * Built as a draft and then sent, because the one-shot endpoint only accepts
+   * a plain `comment` and loses the line breaks. Send is therefore not atomic:
+   * a failure after the draft exists leaves it in Drafts rather than sending
+   * twice, which is the safer direction to fail in.
+   */
   async reply(messageId: string, body: string, replyAll = false): Promise<void> {
-    await this.graph.request<void>(`/me/messages/${messageId}/${replyAll ? 'replyAll' : 'reply'}`, {
-      method: 'POST', body: { comment: body }, label: replyAll ? 'mail.replyAll' : 'mail.reply',
-    });
+    const draft = await this.buildReplyDraft(messageId, body, replyAll);
+    await this.sendDraft(draft.id);
   }
 
   async forward(messageId: string, to: string[], comment: string): Promise<void> {
-    await this.graph.request<void>(`/me/messages/${messageId}/forward`, {
+    const draft = await this.graph.request<GraphMessage>(`/me/messages/${messageId}/createForward`, {
       method: 'POST',
-      body: { comment, toRecipients: to.map((address) => ({ emailAddress: { address } })) },
-      label: 'mail.forward',
+      body: { toRecipients: to.map((address) => ({ emailAddress: { address } })) },
+      label: 'mail.createForward',
+      retry: 'never',
     });
+
+    const quoted = draft.body?.content ?? '';
+    const isHtml = (draft.body?.contentType ?? 'html').toLowerCase() === 'html';
+    const content = isHtml ? `${textToHtml(comment)}${quoted}` : `${comment}\n\n${quoted}`;
+
+    await this.graph.request(`/me/messages/${draft.id}`, {
+      method: 'PATCH',
+      body: { body: { contentType: isHtml ? 'HTML' : 'Text', content } },
+      label: 'mail.forwardDraft.patch',
+      retry: 'never',
+    });
+
+    await this.sendDraft(draft.id);
   }
 
   async sendDraft(messageId: string): Promise<void> {

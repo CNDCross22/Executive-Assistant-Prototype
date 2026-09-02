@@ -63,7 +63,25 @@ signed-in account with a person found in the organisation directory.`,
     instructions: `First read or search for any existing email involved. Do not guess a
 recipient, message reference, wording, or attachment. Prepare the complete action, including
 all recipients, subject and full message. The system will show the preview and ask for Yes or No.
-Never describe a preview as sent, saved, moved or deleted.`,
+Never describe a preview as sent, saved, moved or deleted.
+
+Every email body you write uses this shape and nothing else:
+
+Hi <first name>,
+
+<the message>
+
+Kind Regards,
+<the signed-in person's first name>
+
+Address the recipient by first name only. Keep the message itself to what
+actually needs saying. Close with exactly "Kind Regards," on its own line and
+the sender's name beneath it.
+
+Do not add a title, phone number, address, company name, legal notice or any
+other footer. Nothing is appended after the sender's name, and no signature
+block is attached anywhere in the system, so anything of that kind has to come
+from you deliberately, and it should not.`,
   },
   {
     key: 'tasks',

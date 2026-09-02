@@ -21,6 +21,9 @@
     "eval:behaviour": "npm run build --workspace=apps/api && node apps/api/dist/evals/run.js",
     "gen:secrets": "node scripts/gen-secrets.mjs",
     "db:migrate": "node scripts/migrate.mjs",
+    "db:prune": "node scripts/prune.mjs",
+    "db:turn-metrics": "node scripts/turn-metrics.mjs",
+    "realtime:maintain": "npm run build --workspace=apps/api && node apps/api/dist/realtime/run-maintain.js",
     "test:agent": "tsx apps/api/src/agent/harness.ts",
     "verify:calendar-model": "tsx --env-file=.env scripts/verify-calendar-model-flow.ts",
     "test:directory": "npm run build --workspace=apps/api && node apps/api/dist/dev/directory-check.js",
@@ -28,7 +31,9 @@
     "uat:live": "npm run build --workspace=apps/api && node apps/api/dist/dev/live-content-uat.js",
     "release:audit": "npm run build --workspace=apps/api && node apps/api/dist/dev/release-audit.js",
     "build:edge": "node scripts/build-edge.mjs",
-    "deploy:edge": "npm run build:edge && supabase functions deploy api --project-ref wkqhlcilewyskpfvndsd --no-verify-jwt"
+    "deploy:edge": "npm run smoke:edge && npx --yes supabase functions deploy api --project-ref wkqhlcilewyskpfvndsd --no-verify-jwt",
+    "smoke:edge": "npm run build:edge && node scripts/smoke-edge.mjs",
+    "realtime:status": "node scripts/realtime-status.mjs"
   },
   "devDependencies": {
     "esbuild": "^0.28.2"

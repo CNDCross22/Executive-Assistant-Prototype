@@ -1,0 +1,111 @@
+name: Database retention
+
+# Applies the retention windows from migration 0014. Supabase does not
+# guarantee pg_cron on every plan, and the Edge runtime is request-driven and
+# cannot hold a timer, so the schedule lives here where it is visible and
+# auditable.
+#
+# Requires a DATABASE_URL repository secret (Supabase transaction pooler URI).
+# Without it the job reports that it was skipped rather than failing the repo.
+
+on:
+  schedule:
+    # 14:10 UTC daily — outside Australian business hours, and deliberately not
+    # on the hour, where every other scheduled job in the world contends.
+    - cron: '10 14 * * *'
+    # Hourly, for subscription renewal and reconciliation only.
+    - cron: '25 * * * *'
+  workflow_dispatch:
+    inputs:
+      dry_run:
+        description: 'Report what would be deleted without deleting it'
+        type: boolean
+        default: true
+
+permissions:
+  contents: read
+
+concurrency:
+  group: retention
+  cancel-in-progress: false
+
+jobs:
+  prune:
+    # The daily retention tick, or a manual run. Never the hourly one.
+    if: github.event.schedule != '25 * * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check for a database connection
+        id: check
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::DATABASE_URL secret is not set; retention did not run."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Apply retention
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ "${{ inputs.dry_run }}" = "true" ]; then
+            npm run db:prune -- --dry-run
+          else
+            npm run db:prune
+          fi
+
+  # Renews Graph subscriptions before they lapse and reconciles anything the
+  # webhook missed. Mail subscriptions expire in under three days, so this must
+  # run well inside that window — hourly gives plenty of margin for a failure
+  # or two without real-time delivery ever going dark.
+  realtime:
+    # The hourly tick, or a manual run. The daily retention pass skips it.
+    if: github.event.schedule != '10 14 * * *'
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Check for real-time configuration
+        id: check
+        env:
+          HERMES_WEBHOOK_URL: ${{ secrets.HERMES_WEBHOOK_URL }}
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+        run: |
+          if [ -z "$DATABASE_URL" ] || [ -z "$HERMES_WEBHOOK_URL" ]; then
+            echo "configured=false" >> "$GITHUB_OUTPUT"
+            echo "::warning::Real-time mail is not configured; subscription maintenance did not run."
+          else
+            echo "configured=true" >> "$GITHUB_OUTPUT"
+          fi
+
+      - name: Renew subscriptions and reconcile
+        if: steps.check.outputs.configured == 'true'
+        env:
+          DATABASE_URL: ${{ secrets.DATABASE_URL }}
+          HERMES_WEBHOOK_URL: ${{ secrets.HERMES_WEBHOOK_URL }}
+          MICROSOFT_CLIENT_ID: ${{ secrets.MICROSOFT_CLIENT_ID }}
+          MICROSOFT_CLIENT_SECRET: ${{ secrets.MICROSOFT_CLIENT_SECRET }}
+          MICROSOFT_TENANT_ID: ${{ secrets.MICROSOFT_TENANT_ID }}
+          ENCRYPTION_KEY: ${{ secrets.ENCRYPTION_KEY }}
+          SESSION_SECRET: ${{ secrets.SESSION_SECRET }}
+        run: npm run realtime:maintain

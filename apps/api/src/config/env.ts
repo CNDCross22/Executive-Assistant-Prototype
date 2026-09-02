@@ -87,6 +87,11 @@ const schema = z.object({
   HERMES_PROACTIVE_INTERVAL_MINUTES: z.coerce.number().int().min(5).max(1_440).default(15),
   HERMES_EDGE_RUNTIME: z.preprocess((v) => v === 'true' || v === true, z.boolean()).default(false),
 
+  // Phase 1 real-time mail. Where Microsoft Graph should post change
+  // notifications. Must be public HTTPS; leave blank in development, where
+  // real-time delivery stays off and polling continues unchanged.
+  HERMES_WEBHOOK_URL: optionalUrl(),
+
   // Secrets
   SESSION_SECRET: optionalSecret(),
   ENCRYPTION_KEY: optionalSecret(),
