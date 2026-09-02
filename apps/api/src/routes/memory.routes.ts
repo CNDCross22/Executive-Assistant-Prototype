@@ -3,7 +3,7 @@ import { z } from 'zod';
 import { requireAuth } from '../auth/session.js';
 import { isUuid, Errors } from '../lib/errors.js';
 import { isDemo } from '../config/env.js';
-import { approveMemory, findMemoryConflicts, listMemory, remember, updateMemory, forget } from '../memory/store.js';
+import { approveMemory, findMemoryConflicts, listMemory, remember, titleFor, updateMemory, forget } from '../memory/store.js';
 import { pendingSignals, PROPOSAL_THRESHOLD } from '../memory/learning.js';
 
 /**
@@ -30,11 +30,24 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
     };
   });
 
+  /**
+   * Add a preference by hand.
+   *
+   * The assistant could already save one when asked, but the page that lists
+   * every rule had no way to write one — the Director could review and delete
+   * what was there and nothing else. Stating a rule outright is the most
+   * direct thing she can do, and it was the one route missing.
+   *
+   * What arrives here is stated, not inferred, so it is active immediately.
+   * Nothing observed reaches this route: that path still proposes and waits.
+   */
   app.post('/api/memory', { preHandler: requireAuth }, async (request) => {
     const body = z
       .object({
         type: z.enum(['preference', 'person', 'working_style', 'operational', 'historical', 'procedural']),
-        title: z.string().min(2).max(200),
+        // Optional: the list shows the rule itself, never its label, so asking
+        // for a title as well is a field to fill in for no visible gain.
+        title: z.string().min(2).max(200).optional(),
         content: z.string().min(2).max(2000),
         key: z.string().max(80).optional(),
         subject: z.string().max(200).optional(),
@@ -48,6 +61,7 @@ export async function memoryRoutes(app: FastifyInstance): Promise<void> {
     const entry = await remember({
       userId: request.user!.id,
       ...body,
+      title: body.title ?? titleFor(body.content),
       source: 'explicit',
       confidence: 1,
       status: 'active',

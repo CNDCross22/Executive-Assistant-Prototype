@@ -1,5 +1,6 @@
 import type { GraphClient } from './client.js';
-import { extractSafeText, MAX_EXTERNAL_FILE_BYTES, safeFileName, supportsTextExtraction, type ExtractedText } from '../content/safe-text.js';
+import { MAX_EXTERNAL_FILE_BYTES, safeFileName } from '../content/safe-text.js';
+import { extractDocumentText, supportsExtraction, SUPPORTED_FORMATS_SENTENCE, type ExtractedDocument } from '../content/documents.js';
 
 /**
  * Application-shaped mail objects.
@@ -377,7 +378,7 @@ export class MailService {
       size: Math.max(0, a.size ?? 0),
       isInline: a.isInline ?? false,
       kind,
-      textSupported: kind === 'file' && supportsTextExtraction(name, a.contentType),
+      textSupported: kind === 'file' && supportsExtraction(name, a.contentType),
       lastModifiedAt: a.lastModifiedDateTime ?? '',
     };
   }
@@ -396,14 +397,14 @@ export class MailService {
     attachmentId: string;
     startCharacter?: number;
     maxCharacters?: number;
-  }): Promise<MailAttachment & ExtractedText> {
+  }): Promise<MailAttachment & ExtractedDocument> {
     const metadata = await this.graph.request<GraphAttachment>(
       `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}`,
       { query: { $select: 'id,name,contentType,size,isInline,lastModifiedDateTime' }, label: 'mail.attachment.metadata' },
     );
     const attachment = this.shapeAttachment(metadata);
     if (!attachment.textSupported || attachment.kind !== 'file') {
-      return Promise.reject(new Error(`I cannot safely extract text from ${attachment.name}.`));
+      return Promise.reject(new Error(`I cannot read ${attachment.name}. ${SUPPORTED_FORMATS_SENTENCE}`));
     }
     if (attachment.size > MAX_EXTERNAL_FILE_BYTES) {
       return Promise.reject(new Error(`${attachment.name} is larger than the 5 MB inspection limit.`));
@@ -412,7 +413,7 @@ export class MailService {
       `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`,
       { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'mail.attachment.content' },
     );
-    const extracted = extractSafeText({
+    const extracted = await extractDocumentText({
       bytes: file.bytes,
       name: attachment.name,
       contentType: attachment.contentType || file.contentType,
