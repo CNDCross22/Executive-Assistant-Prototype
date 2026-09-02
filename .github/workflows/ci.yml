@@ -50,3 +50,51 @@ jobs:
       # runtime-shim regression here rather than in front of the Director.
       - name: Edge bundle smoke test
         run: npm run smoke:edge
+
+  # Applies every migration from the first to the latest against an empty
+  # database. plpgsql resolves column names at execution rather than creation,
+  # so a function can be created happily and fail only when first called —
+  # which is exactly how a retention bug reached production and would have
+  # silently deleted nothing. This runs the SQL for real.
+  migrations:
+    name: Migrations apply from scratch
+    runs-on: ubuntu-latest
+    services:
+      postgres:
+        image: postgres:17
+        env:
+          POSTGRES_PASSWORD: hermes
+          POSTGRES_DB: hermes_ci
+        options: >-
+          --health-cmd pg_isready
+          --health-interval 5s
+          --health-timeout 5s
+          --health-retries 10
+        ports:
+          - 5432:5432
+    steps:
+      - uses: actions/checkout@v4
+
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 22
+          cache: npm
+
+      - run: npm ci
+
+      - name: Apply every migration
+        env:
+          DATABASE_URL: postgres://postgres:hermes@127.0.0.1:5432/hermes_ci
+        run: npm run db:migrate
+
+      - name: Re-run to prove migrations are idempotent
+        env:
+          DATABASE_URL: postgres://postgres:hermes@127.0.0.1:5432/hermes_ci
+        run: npm run db:migrate
+
+      - name: Exercise the retention function
+        env:
+          DATABASE_URL: postgres://postgres:hermes@127.0.0.1:5432/hermes_ci
+        # A dry run counts rows with the same predicates the real prune uses,
+        # so a wrong column name fails here rather than at 14:10 UTC in silence.
+        run: npm run db:prune -- --dry-run
