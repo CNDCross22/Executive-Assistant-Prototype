@@ -114,6 +114,10 @@ describe('Plain text to HTML', () => {
       assert.match(tag, /font-family: Aptos, Calibri, sans-serif/);
       assert.match(tag, /font-size: 11pt/);
       assert.match(tag, /color: #000000/);
+      // Outlook injects `<style>p { margin-bottom:0 }</style>` into reply
+      // bodies. Without an inline margin the greeting, message and sign-off
+      // render stacked against each other with no blank line between them.
+      assert.match(tag, /margin: 0 0 11pt 0/, 'paragraph spacing must be stated inline to survive');
     }
   });
 });

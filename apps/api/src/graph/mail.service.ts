@@ -124,7 +124,17 @@ export function htmlToText(html: string): string {
  * Aptos is the current Outlook default; Calibri is the previous one and the
  * fallback for a client that does not have Aptos.
  */
-const BODY_STYLE = 'font-family: Aptos, Calibri, sans-serif; font-size: 11pt; color: #000000;';
+const BODY_STYLE = [
+  'font-family: Aptos, Calibri, sans-serif',
+  'font-size: 11pt',
+  'color: #000000',
+  // The blank line between sections. Outlook injects
+  // `<style>p { margin-top:0; margin-bottom:0 }</style>` into every reply
+  // body, which collapses the gap and stacks the greeting, message and
+  // sign-off against each other. An inline declaration outranks that block,
+  // so the spacing has to be stated here to survive.
+  'margin: 0 0 11pt 0',
+].join('; ');
 
 /**
  * Plain text as minimal HTML, preserving the shape the author wrote.
