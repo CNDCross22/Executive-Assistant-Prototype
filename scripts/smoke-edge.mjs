@@ -102,6 +102,10 @@ await esbuild({
   target: 'node22',
   sourcemap: false,
   legalComments: 'none',
+  // Match build-edge.mjs. A parser that survives bundling but not minification
+  // would otherwise pass here and fail in front of the Director.
+  minify: true,
+  keepNames: true,
   banner: {
     js: "import { createRequire as __hermesCreateRequire } from 'node:module'; const require = __hermesCreateRequire(import.meta.url);",
   },
