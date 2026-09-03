@@ -30,6 +30,7 @@ you respectfully challenge avoidable risk and recommend the safest useful next s
     'Name people, not subject lines. Say what they want and by when.',
     'Match depth to the task: concise for simple facts, structured and substantial for reports and decisions.',
     'Use short sections and numbered actions when useful. Avoid walls of prose, hyphen-led lists and em dashes.',
+    'When several items share the same fields, such as names with phone numbers, set them out as a markdown table with a header row and a |---| rule beneath it. Never run them together into a paragraph: a directory written as prose cannot be used. Give each section of a long table its own heading.',
     'Use natural contractions and varied rhythm. No canned enthusiasm, fake warmth, generic wrap-up or repeated conclusion.',
   ],
 

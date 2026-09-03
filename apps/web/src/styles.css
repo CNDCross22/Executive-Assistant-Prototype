@@ -1039,3 +1039,52 @@ body,
     display: none;
   }
 }
+
+/*
+  Tables in an assistant answer.
+
+  A staff directory arrived as one unreadable run of pipes because nothing
+  rendered a table. Wide ones scroll inside their own box rather than pushing
+  the conversation sideways, since a phone is where this is worst.
+*/
+.assistant-table-wrap {
+  overflow-x: auto;
+  margin: 0;
+  border: 1px solid var(--line-soft);
+  border-radius: 8px;
+}
+
+.assistant-table {
+  width: 100%;
+  border-collapse: collapse;
+  font-size: 0.92rem;
+  white-space: nowrap;
+}
+
+.assistant-table th,
+.assistant-table td {
+  padding: 0.45rem 0.7rem;
+  text-align: left;
+  border-bottom: 1px solid var(--line-soft);
+}
+
+.assistant-table th {
+  background: var(--sunk);
+  color: var(--muted);
+  font-family: var(--font-mono);
+  font-size: 0.66rem;
+  font-weight: 600;
+  letter-spacing: 0.08em;
+  text-transform: uppercase;
+  position: sticky;
+  top: 0;
+}
+
+.assistant-table tbody tr:last-child td {
+  border-bottom: none;
+}
+
+/* Numbers line up when they are the same width. */
+.assistant-table td {
+  font-variant-numeric: tabular-nums;
+}

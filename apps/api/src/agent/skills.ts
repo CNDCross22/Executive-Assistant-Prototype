@@ -378,7 +378,14 @@ export function selectSkills(
   // workflow matches, keep this turn within action-capable skill families.
   const durableMemoryLanguage =
     /\b(?:remember\s+(?:that\s+)?(?:i|my|we|our)|from now on|my preference is|i (?:strongly )?prefer|i want you to (?:always|never)|please (?:always|never))\b/.test(text);
-  const mutationVerb = allowMutationRouting && (
+  // "Send me the names" is not a send. She is asking to be shown something,
+  // and reading it as a change routed the turn to the action skills, cut off
+  // every read skill, and produced a search of the address book for a contact
+  // list that was sitting in an attachment she had just had read to her.
+  // An explicit address is the tell that a real send was meant.
+  const showMe = /\b(?:send|give|show|forward)\s+(?:me|us|it|them|those|these)\b/.test(text) &&
+    !/\b(?:to|for)\s+\S+@/.test(text);
+  const mutationVerb = allowMutationRouting && !showMe && (
     /\b(add|remove|invite|send|reply|respond|forward|draft|compose|create|book|schedule|reschedule|update|edit|change|move|delete|cancel|accept|decline|complete|mark|flag|archive|enable|disable|set|remember|forget)\b/.test(text) ||
     /\b(?:try again|do it again|let['’]?s do it again)\b/.test(text) ||
     durableMemoryLanguage);

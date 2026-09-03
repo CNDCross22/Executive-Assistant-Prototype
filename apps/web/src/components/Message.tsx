@@ -73,7 +73,26 @@ function ApprovalCard({ approval, disabled, onDecision }: { approval: PendingApp
 type CopyBlock =
   | { kind: 'heading'; text: string }
   | { kind: 'paragraph'; text: string }
-  | { kind: 'list'; ordered: boolean; items: string[] };
+  | { kind: 'list'; ordered: boolean; items: string[] }
+  | { kind: 'table'; head: string[]; rows: string[][] };
+
+/**
+ * A row of a table, written the way a model writes one.
+ *
+ * Nothing rendered these, so every row fell through to the paragraph branch
+ * and the whole table was joined into a single line. A staff directory of
+ * names and numbers arrived as an unreadable run of pipes, which is worse than
+ * no formatting at all: the information was there and could not be used.
+ */
+const TABLE_ROW = /^\|(.+)\|$/;
+/** The |---|---| rule under the header, which carries no data of its own. */
+const TABLE_RULE = /^\|[\s:|-]+\|$/;
+
+function tableCells(line: string): string[] {
+  return (line.match(TABLE_ROW)?.[1] ?? '')
+    .split('|')
+    .map((cell) => cleanInline(cell.trim()));
+}
 
 function cleanInline(text: string): string {
   return text
@@ -98,10 +117,31 @@ function StructuredMessage({ text }: { text: string }) {
     list = null;
   };
 
-  for (const rawLine of text.replace(/\r/g, '').split('\n')) {
-    const line = rawLine.trim();
+  const lines = text.replace(/\r/g, '').split('\n');
+
+  for (let index = 0; index < lines.length; index++) {
+    const line = (lines[index] ?? '').trim();
     const heading = line.match(/^#{1,6}\s+(.+)$/) ?? line.match(/^\*\*([^*]{2,60})\*\*:?$/);
     const item = line.match(/^([-*•]|\d+[.)])\s+(.+)$/);
+
+    // A table is only a table when a rule sits under its header. Without that,
+    // a lone piped line is far more likely to be ordinary prose.
+    if (TABLE_ROW.test(line) && !TABLE_RULE.test(line) && TABLE_RULE.test((lines[index + 1] ?? '').trim())) {
+      flushParagraph();
+      flushList();
+      const head = tableCells(line);
+      const rows: string[][] = [];
+      let cursor = index + 2;
+      while (cursor < lines.length) {
+        const next = (lines[cursor] ?? '').trim();
+        if (!TABLE_ROW.test(next) || TABLE_RULE.test(next)) break;
+        rows.push(tableCells(next));
+        cursor++;
+      }
+      blocks.push({ kind: 'table', head, rows });
+      index = cursor - 1;
+      continue;
+    }
 
     if (!line) {
       flushParagraph();
@@ -138,6 +178,24 @@ function StructuredMessage({ text }: { text: string }) {
             <List key={`${index}-${block.items[0] ?? ''}`} className={block.ordered ? 'assistant-list ordered' : 'assistant-list'}>
               {block.items.map((item, itemIndex) => <li key={`${itemIndex}-${item}`}>{item}</li>)}
             </List>
+          );
+        }
+        if (block.kind === 'table') {
+          return (
+            <div key={`${index}-${block.head.join('-')}`} className="assistant-table-wrap">
+              <table className="assistant-table">
+                <thead>
+                  <tr>{block.head.map((cell, cellIndex) => <th key={`${cellIndex}-${cell}`}>{cell}</th>)}</tr>
+                </thead>
+                <tbody>
+                  {block.rows.map((row, rowIndex) => (
+                    <tr key={`${rowIndex}-${row[0] ?? ''}`}>
+                      {block.head.map((_, cellIndex) => <td key={cellIndex}>{row[cellIndex] ?? ''}</td>)}
+                    </tr>
+                  ))}
+                </tbody>
+              </table>
+            </div>
           );
         }
         return <p key={`${index}-${block.text.slice(0, 24)}`} className="assistant-paragraph">{block.text}</p>;
