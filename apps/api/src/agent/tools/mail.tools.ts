@@ -175,7 +175,7 @@ const searchTool = defineTool({
     const results = found;
     return {
       count: results.length,
-      note: 'Items marked bulk are newsletters or automated mail. Do not present them as updates from a person.',
+      note: 'Items marked bulk are newsletters or automated mail. Do not present them as updates from a person. Where hasAttachment is true you can open the file: list its attachments, then read the supported ones.',
       results: results.map((m) => ({
         ref: ctx.refs.ref(m.id),
         from: m.from ? `${m.from.name} <${m.from.address}>` : 'unknown',
@@ -183,6 +183,7 @@ const searchTool = defineTool({
         receivedAt: m.receivedAt,
         unread: !m.isRead,
         bulk: looksAutomated(m),
+        hasAttachment: m.hasAttachments,
         preview: m.bodyPreview.slice(0, 220),
       })),
     };
@@ -255,7 +256,7 @@ const readTool = defineTool({
       receivedAt: m.receivedAt,
       external: m.isExternal,
       attachmentStatus: m.hasAttachments
-        ? 'An attachment is present but has not been inspected.'
+        ? 'This message has an attachment. It has not been read yet: list the attachments and read the supported ones before answering a question about what is in it.'
         : 'No attachment is indicated.',
       executiveAnalysis: {
         ...analysis,
