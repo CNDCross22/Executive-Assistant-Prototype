@@ -9,6 +9,17 @@ import { isQuietHours, localDay, meetsThreshold } from '../proactive/policy.js';
 import { MemoryProactiveStore } from '../proactive/store.js';
 
 const NOW = new Date('2026-08-31T04:00:00.000Z'); // noon in Taipei
+
+/**
+ * Always pass NOW when reading notifications.
+ *
+ * `notifications()` defaults its clock to the real one and hides any event
+ * that has already expired. That default is right in production and a time
+ * bomb in a test built on a fixed past date: these passed for months and then
+ * began failing on their own, once real time drifted past the fixture expiry,
+ * with no commit to blame. Worse, the cases asserting an empty list passed for
+ * the wrong reason in the meantime.
+ */
 const USER: StoredUser = { id: '11111111-1111-4111-8111-111111111111', msUserId: 'ms-1', email: 'director@example.com', displayName: 'Director', jobTitle: null, timezone: 'Asia/Taipei' };
 
 function item(overrides: Partial<DashboardItem> = {}): DashboardItem {
@@ -81,7 +92,7 @@ describe('Phase 5 policy and delivery safety', () => {
     const second = await scanProactiveSnapshot(input);
     assert.equal(first.notified, 1);
     assert.equal(second.notified, 0);
-    assert.equal((await store.notifications(USER.id)).length, 1);
+    assert.equal((await store.notifications(USER.id, 20, NOW)).length, 1);
   });
 
   test('observe mode records evidence but delivers nothing', async () => {
@@ -89,7 +100,7 @@ describe('Phase 5 policy and delivery safety', () => {
     const result = await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: NOW, store, deliveryMode: 'observe', telemetry: false });
     assert.equal(result.observed, 1);
     assert.equal(result.notified, 0);
-    assert.deepEqual(await store.notifications(USER.id), []);
+    assert.deepEqual(await store.notifications(USER.id, 20, NOW), []);
   });
 
   test('disabled policy suppresses future notices without deleting audit state', async () => {
@@ -97,7 +108,7 @@ describe('Phase 5 policy and delivery safety', () => {
     await store.updatePolicy(USER.id, 'email_attention', { enabled: false, timezone: USER.timezone });
     const result = await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: NOW, store, telemetry: false });
     assert.equal(result.observed, 1);
-    assert.deepEqual(await store.notifications(USER.id), []);
+    assert.deepEqual(await store.notifications(USER.id, 20, NOW), []);
     assert.equal((await store.diagnostics(USER.id)).lastRun?.detected, 1);
   });
 
@@ -113,17 +124,17 @@ describe('Phase 5 policy and delivery safety', () => {
   test('notification actions and policies are strictly user-scoped', async () => {
     const store = new MemoryProactiveStore();
     await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: NOW, store, telemetry: false });
-    const notice = (await store.notifications(USER.id))[0]!;
+    const notice = (await store.notifications(USER.id, 20, NOW))[0]!;
     const other = '22222222-2222-4222-8222-222222222222';
     assert.equal(await store.setNotificationStatus(other, notice.id, 'dismissed', NOW), false);
-    assert.equal((await store.notifications(USER.id)).length, 1);
-    assert.deepEqual(await store.notifications(other), []);
+    assert.equal((await store.notifications(USER.id, 20, NOW)).length, 1);
+    assert.deepEqual(await store.notifications(other, 20, NOW), []);
   });
 
   test('snoozed notices remain hidden until the exact time and can then return', async () => {
     const store = new MemoryProactiveStore();
     await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: NOW, store, telemetry: false });
-    const notice = (await store.notifications(USER.id))[0]!;
+    const notice = (await store.notifications(USER.id, 20, NOW))[0]!;
     const until = new Date(NOW.getTime() + 3_600_000);
     assert.equal(await store.snooze(USER.id, notice.id, until, NOW), true);
     assert.deepEqual(await store.notifications(USER.id, 20, new Date(NOW.getTime() + 30 * 60_000)), []);
@@ -135,7 +146,7 @@ describe('Phase 5 policy and delivery safety', () => {
     await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: NOW, store, telemetry: false });
     const result = await scanProactiveSnapshot({ user: USER, dashboard: dashboard({ needsYou: [] }), calendar: [], now: new Date(NOW.getTime() + 60_000), store, telemetry: false });
     assert.equal(result.resolved, 1);
-    assert.deepEqual(await store.notifications(USER.id), []);
+    assert.deepEqual(await store.notifications(USER.id, 20, NOW), []);
   });
 
   test('a notice withheld during quiet hours is delivered after quiet hours end', async () => {
@@ -144,7 +155,7 @@ describe('Phase 5 policy and delivery safety', () => {
     const morning = new Date('2026-08-31T23:00:00Z'); // 07:00 Taipei
     const first = await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: quiet, store, telemetry: false });
     assert.equal(first.suppressed, 1);
-    assert.deepEqual(await store.notifications(USER.id), []);
+    assert.deepEqual(await store.notifications(USER.id, 20, NOW), []);
     const second = await scanProactiveSnapshot({ user: USER, dashboard: dashboard(), calendar: [], now: morning, store, telemetry: false });
     assert.equal(second.notified, 1);
     assert.equal((await store.notifications(USER.id, 20, morning)).length, 1);
