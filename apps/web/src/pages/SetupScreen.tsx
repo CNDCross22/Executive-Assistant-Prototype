@@ -73,7 +73,7 @@ export default function SetupScreen({ onRecheck }: { onRecheck: () => void }) {
       <div className="panel mb-8 p-5">
         <p className="label mb-3">Where these go</p>
         <p className="mb-3 text-[0.95rem]" style={{ color: 'var(--ink-soft)' }}>
-          All of it lives in one file — <code style={{ fontFamily: 'var(--font-mono)' }}>.env</code> in the project
+          All of it lives in one file, <code style={{ fontFamily: 'var(--font-mono)' }}>.env</code>, in the project
           root. Start by copying the example and generating the secrets:
         </p>
         <pre

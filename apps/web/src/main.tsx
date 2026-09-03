@@ -17,8 +17,8 @@ const queryClient = new QueryClient({
         Mailbox data must be fresh: the Director acts on email in minutes, and
         a stale dashboard sends her back to Outlook for good.
 
-        `refetchOnWindowFocus` was off, which was the single worst offender —
-        she alt-tabs from Outlook to here and saw whatever was true when she
+        `refetchOnWindowFocus` was off, which was the single worst offender.
+        She alt tabs from Outlook to here and saw whatever was true when she
         left. Coming back to the tab is the strongest possible signal that she
         wants current data.
 

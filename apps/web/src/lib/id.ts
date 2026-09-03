@@ -3,7 +3,7 @@
  *
  * `crypto.randomUUID()` is only defined on https or localhost. The Director
  * opening this from her phone on the office network hits
- * `http://192.168.x.x:5173`, which is NOT a secure context — there the call is
+ * `http://192.168.x.x:5173`, which is NOT a secure context, so there the call is
  * undefined, and every send threw a TypeError straight into the error
  * boundary. `getRandomValues` has no such restriction, so it carries the real
  * work and `randomUUID` is used only when it genuinely exists.

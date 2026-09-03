@@ -18,7 +18,7 @@ export default class ErrorBoundary extends Component<
   }
 
   override componentDidCatch(error: Error, info: ErrorInfo) {
-    // Kept in the console rather than sent anywhere — this may contain her data.
+    // Kept in the console rather than sent anywhere, since this may contain her data.
     console.error('Executive Assistant interface error:', error, info.componentStack);
   }
 
@@ -34,7 +34,7 @@ export default class ErrorBoundary extends Component<
           </p>
           <h1 className="h-display mb-3 text-xl">The interface stopped, not your mailbox</h1>
           <p className="mb-5" style={{ color: 'var(--ink-soft)' }}>
-            Nothing was sent, changed or deleted — the assistant only reads your email, and this failure
+            Nothing was sent, changed or deleted. The assistant only reads your email, and this failure
             happened in the display. Reloading usually clears it.
           </p>
 

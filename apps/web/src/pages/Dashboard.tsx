@@ -89,7 +89,7 @@ type InboxSort = 'priority' | 'newest' | 'oldest' | 'sender';
 const EMPTY_DASHBOARD_ITEMS: DashboardItem[] = [];
 const PROACTIVE_LABELS: Record<ProactiveEventType, string> = {
   security_warning: 'Suspicious messages', email_attention: 'Priority email', overdue_reply: 'Replies you owe',
-  overdue_follow_up: 'Follow-ups', calendar_conflict: 'Calendar conflicts', upcoming_meeting: 'Upcoming meetings',
+  overdue_follow_up: 'Follow ups', calendar_conflict: 'Calendar conflicts', upcoming_meeting: 'Upcoming meetings',
 };
 
 function greeting(): string {
@@ -136,7 +136,7 @@ function FollowUpList({ items, visible, empty }: { items: FollowUpItem[]; visibl
             rel="noreferrer"
             className="lift -mx-1.5 block min-w-0 rounded px-1.5 py-1.5 no-underline"
             style={{ color: 'inherit' }}
-            title={`${f.subject} — open in Outlook`}
+            title={`Open ${f.subject} in Outlook`}
           >
             <span className="flex items-baseline justify-between gap-2">
               <span className="truncate text-[0.95rem]">{f.person}</span>
@@ -177,7 +177,7 @@ export default function Dashboard({
   /*
     45 seconds, not 5 minutes.
 
-    This is deterministic server work — Graph reads plus scoring — with no
+    This is deterministic server work (Graph reads plus scoring) with no
     model involved, so refreshing often costs nothing but a little quota.
     TanStack pauses the interval while the tab is hidden by default, so a
     dashboard left open overnight is not polling all night.
@@ -195,11 +195,11 @@ export default function Dashboard({
 
     Polling /api/dashboard on a timer meant re-reading the mailbox from
     Microsoft Graph every 45 seconds whether or not anything had arrived. This
-    asks Hermes' own tables instead — one indexed read, no Graph call, no
-    model — and only pulls the expensive dashboard when the cursor moves.
+    asks Hermes' own tables instead: one indexed read, no Graph call, no
+    model. It pulls the expensive dashboard only when the cursor moves.
 
     The result is both cheaper and faster: fifteen seconds to notice new mail
-    instead of forty-five, at a fraction of the quota.
+    instead of forty five, at a fraction of the quota.
   */
   const { data: cursorData } = useQuery({
     queryKey: ['proactive-cursor'],
@@ -290,7 +290,7 @@ export default function Dashboard({
       )}
 
       {/*
-        Below `lg` the page scrolls normally — stacking is right on a phone.
+        Below `lg` the page scrolls normally, since stacking is right on a phone.
         At `lg` and above nothing scrolls: the grid fills the viewport and each
         card scrolls inside itself.
       */}
@@ -381,7 +381,7 @@ export default function Dashboard({
                   <option value="priority">Priority first</option>
                   <option value="newest">Newest first</option>
                   <option value="oldest">Oldest first</option>
-                  <option value="sender">Sender A–Z</option>
+                  <option value="sender">Sender A to Z</option>
                 </select>
               </div>
               <div className="filter-strip" aria-label="Filter inbox">

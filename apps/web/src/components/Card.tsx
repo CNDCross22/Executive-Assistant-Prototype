@@ -21,7 +21,7 @@ export default function Card({
   count?: number;
   collapseAfter?: number;
   totalItems?: number;
-  /** Given `visibleCount` — Infinity when expanded or uncapped. */
+  /** Given `visibleCount`, Infinity when expanded or uncapped. */
   children: ReactNode | ((visibleCount: number) => ReactNode);
   footer?: ReactNode;
 }) {

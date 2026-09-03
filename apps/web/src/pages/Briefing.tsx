@@ -66,7 +66,7 @@ function StructuredReport({ text }: { text: string }) {
           key={`${section.title}-${section.blocks[0] ?? ''}`}
           className={section.title === 'SECURITY NOTE' ? 'report-section report-section-warning' : 'report-section'}
         >
-          <h2>{section.title === 'FOLLOW-UPS' ? 'Follow-ups' : section.title.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())}</h2>
+          <h2>{section.title === 'FOLLOW-UPS' ? 'Follow ups' : section.title.toLowerCase().replace(/\b\w/g, (letter) => letter.toUpperCase())}</h2>
           <div className="report-section-body">
             {section.blocks.map((block, index) => {
               const showNumber = block.listItem &&

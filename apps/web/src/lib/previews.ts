@@ -5,7 +5,7 @@ import type { Step } from './api';
  *
  * These exist ONLY in demo mode, purely so the chat can be seen populated
  * before there are AI credits. Every preview reply is tagged so the UI can
- * label it — nothing here is ever presented as a real answer, and none of it
+ * label it. Nothing here is ever presented as a real answer, and none of it
  * runs in a live deployment.
  *
  * The wording mirrors what the real pipeline produces: prose, no lists, names
