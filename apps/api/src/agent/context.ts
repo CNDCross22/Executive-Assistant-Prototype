@@ -20,6 +20,14 @@ export interface AssembledContext {
   recentFacts: string[];
   activeAction?: ActiveActionContext;
   skillQuery: string;
+  /**
+   * Exact tool names from recent successful steps, newest first.
+   *
+   * A precise record of what the assistant just did. The prose of a turn is
+   * not: it mentions email and messages whatever the subject was, and routing
+   * on it drags every follow up towards the same few skills.
+   */
+  recentTools: string[];
   metrics: {
     candidateMessages: number;
     selectedMessages: number;
@@ -107,6 +115,15 @@ export function assembleContext(args: {
     if (recentFacts.length >= 6) break;
   }
 
+  const recentTools: string[] = [];
+  for (const turn of [...args.history].reverse()) {
+    for (const step of turn.steps ?? []) {
+      if (step.status !== 'success') continue;
+      if (!recentTools.includes(step.tool)) recentTools.push(step.tool);
+    }
+    if (recentTools.length >= 8) break;
+  }
+
   const messages = selected;
   const contextTerms = messages.slice(-8).map((message) => message.content).join('\n');
   const skillQuery = [args.request, args.request, args.request, args.activeAction?.tool.replaceAll('_', ' '), contextTerms]
@@ -117,6 +134,7 @@ export function assembleContext(args: {
     recentFacts,
     ...(args.activeAction ? { activeAction: args.activeAction } : {}),
     skillQuery,
+    recentTools,
     metrics: {
       candidateMessages: args.history.length,
       selectedMessages: messages.length,
