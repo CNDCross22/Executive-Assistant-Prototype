@@ -238,6 +238,11 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
           scopeRef: m.scopeRef, source: m.source, expiresAt: m.expiresAt,
         })),
         skillQuery: `${message}\n${requestIntent.routingHint}`,
+        // What the assistant just did, so a follow up is not routed as though
+        // the conversation had only started. "Show me the contacts" went to the
+        // address book seconds after a contact list was read out of an
+        // attachment, because routing saw nothing but the newest sentence.
+        recentTools: assembled.recentTools,
         responseMode: mode,
         conversationContext: assembled,
         requestIntent,

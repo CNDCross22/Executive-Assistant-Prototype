@@ -18,6 +18,7 @@ export interface PromptContext {
   memory?: { type: string; title: string; content: string; scope?: string; scopeRef?: string | null; source?: string; expiresAt?: string | null }[];
   /** Current request plus the immediately preceding user context for routing. */
   skillQuery?: string;
+  recentTools?: string[];
   /** Presentation contract only. It never changes capability or approval. */
   responseMode?: ResponseMode;
   conversationContext?: Pick<AssembledContext, 'recentFacts' | 'activeAction'>;
@@ -41,7 +42,7 @@ export function systemPrompt(
   });
   const time = formatInZone(now, zone, { hour: '2-digit', minute: '2-digit' });
 
-  const skills = selectSkills(context.skillQuery ?? userMessage, 2, context.requestIntent?.operation === 'write');
+  const skills = selectSkills(context.skillQuery ?? userMessage, 2, context.requestIntent?.operation === 'write', context.recentTools);
   const firstName = user.displayName.split(' ')[0] ?? user.displayName;
 
   return `${soulBlock()}
