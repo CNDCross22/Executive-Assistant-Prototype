@@ -316,7 +316,11 @@ async function readPdf(bytes: Uint8Array, name: string): Promise<{ text: string;
 
   let document;
   try {
-    document = await getDocumentProxy(bytes, {
+    // A copy, always. PDF.js takes ownership of the buffer it parses and
+    // detaches it, so handing it the caller's array leaves that array empty
+    // for anybody who needs the bytes afterwards. That silently produced a
+    // page count of zero and an unreadable file on the vision fallback.
+    document = await getDocumentProxy(new Uint8Array(bytes), {
       // We want the characters and nothing else. Font programs inside a PDF
       // are the part with a history of remote-code-execution bugs, and a
       // document the Director was emailed has no business loading typefaces or
@@ -344,6 +348,23 @@ async function readPdf(bytes: Uint8Array, name: string): Promise<{ text: string;
   const { text } = await extractText(document, { mergePages: false });
   const pages = Array.isArray(text) ? text : [String(text)];
   return { text: pages.map((page) => page.trim()).join('\n\n'), pages: pages.length };
+}
+
+/**
+ * How many pages a PDF has, when extraction found no text on any of them.
+ *
+ * Reparses, but only on the path where the alternative is paying a model to
+ * look at every page, so knowing the count first is what makes the cap
+ * enforceable.
+ */
+export async function pdfPageCount(bytes: Uint8Array): Promise<number> {
+  try {
+    const { getDocumentProxy } = await import('unpdf');
+    const document = await getDocumentProxy(new Uint8Array(bytes), { verbosity: 0, useWorkerFetch: false, disableFontFace: true });
+    return document.numPages;
+  } catch {
+    return 0;
+  }
 }
 
 // --- Entry point -----------------------------------------------------------

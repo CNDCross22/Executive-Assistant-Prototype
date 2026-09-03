@@ -81,6 +81,20 @@ export class OpenAIProvider implements AIProvider {
         continue;
       }
 
+      if (message.attachments?.length && message.role === 'user') {
+        input.push({
+          role: 'user',
+          content: [
+            { type: 'input_text', text: message.content },
+            ...message.attachments.map((attachment) =>
+              attachment.kind === 'image'
+                ? { type: 'input_image' as const, image_url: attachment.dataUrl, detail: 'auto' as const }
+                : { type: 'input_file' as const, filename: attachment.filename, file_data: attachment.dataUrl }),
+          ],
+        } as ResponseInputItem);
+        continue;
+      }
+
       input.push({ role: message.role, content: message.content });
     }
 

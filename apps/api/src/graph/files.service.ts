@@ -1,5 +1,6 @@
 import { MAX_EXTERNAL_FILE_BYTES, safeFileName } from '../content/safe-text.js';
 import { extractDocumentText, supportsExtraction, SUPPORTED_FORMATS_SENTENCE, type ExtractedDocument } from '../content/documents.js';
+import { isVisionReadable } from '../content/vision.js';
 import type { GraphClient } from './client.js';
 
 export interface FileSummary {
@@ -11,7 +12,10 @@ export interface FileSummary {
   webUrl: string;
   kind: 'file' | 'folder' | 'package' | 'unknown';
   mimeType: string;
+  /** Text can be extracted from it directly. */
   textSupported: boolean;
+  /** Readable at all: by extraction, or by looking at the page. */
+  readable: boolean;
 }
 
 export interface SiteSummary { id: string; name: string; displayName: string; webUrl: string; }
@@ -48,6 +52,8 @@ export class FilesService {
       kind,
       mimeType,
       textSupported: kind === 'file' && supportsExtraction(name, mimeType),
+      // Readable at all, by extraction or by looking at the page.
+      readable: kind === 'file' && (supportsExtraction(name, mimeType) || isVisionReadable(name, mimeType)),
     };
   }
 
@@ -97,27 +103,40 @@ export class FilesService {
     return rows.slice(0, limit).map((row) => this.shape(row));
   }
 
+  /**
+   * Download one file. Split from reading it for the same reason as mail:
+   * deciding to look at a page belongs above this service, so nothing here
+   * reaches for the paid model.
+   */
+  async fileBytes(input: {
+    driveId: string;
+    itemId: string;
+  }): Promise<{ metadata: FileSummary; bytes: Uint8Array; contentType: string }> {
+    const item = await this.graph.request<GraphDriveItem>(
+      `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}`,
+      { query: { $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,package,parentReference' }, label: 'files.item.metadata' },
+    );
+    const metadata = this.shape(item, input.driveId);
+    if (!metadata.readable) throw new Error(`I cannot read ${metadata.name}. ${SUPPORTED_FORMATS_SENTENCE}`);
+    if (metadata.size > MAX_EXTERNAL_FILE_BYTES) throw new Error(`${metadata.name} is larger than the 5 MB inspection limit.`);
+    const content = await this.graph.requestBytes(
+      `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}/content`,
+      { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'files.item.content' },
+    );
+    return { metadata, bytes: content.bytes, contentType: metadata.mimeType || content.contentType };
+  }
+
   async readText(input: {
     driveId: string;
     itemId: string;
     startCharacter?: number;
     maxCharacters?: number;
   }): Promise<FileSummary & ExtractedDocument> {
-    const item = await this.graph.request<GraphDriveItem>(
-      `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}`,
-      { query: { $select: 'id,name,size,lastModifiedDateTime,webUrl,file,folder,package,parentReference' }, label: 'files.item.metadata' },
-    );
-    const metadata = this.shape(item, input.driveId);
-    if (!metadata.textSupported) throw new Error(`I cannot read ${metadata.name}. ${SUPPORTED_FORMATS_SENTENCE}`);
-    if (metadata.size > MAX_EXTERNAL_FILE_BYTES) throw new Error(`${metadata.name} is larger than the 5 MB inspection limit.`);
-    const content = await this.graph.requestBytes(
-      `/drives/${encodeURIComponent(input.driveId)}/items/${encodeURIComponent(input.itemId)}/content`,
-      { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'files.item.content' },
-    );
+    const { metadata, bytes, contentType } = await this.fileBytes(input);
     const extracted = await extractDocumentText({
-      bytes: content.bytes,
+      bytes,
       name: metadata.name,
-      contentType: metadata.mimeType || content.contentType,
+      contentType,
       startCharacter: input.startCharacter,
       maxCharacters: input.maxCharacters,
     });

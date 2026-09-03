@@ -1,6 +1,7 @@
 import type { GraphClient } from './client.js';
 import { MAX_EXTERNAL_FILE_BYTES, safeFileName } from '../content/safe-text.js';
 import { extractDocumentText, supportsExtraction, SUPPORTED_FORMATS_SENTENCE, type ExtractedDocument } from '../content/documents.js';
+import { isVisionReadable } from '../content/vision.js';
 
 /**
  * Application-shaped mail objects.
@@ -44,7 +45,10 @@ export interface MailAttachment {
   size: number;
   isInline: boolean;
   kind: 'file' | 'item' | 'reference' | 'unknown';
+  /** Text can be extracted from it directly. */
   textSupported: boolean;
+  /** Readable at all: by extraction, or by looking at the page. */
+  readable: boolean;
   lastModifiedAt: string;
 }
 
@@ -379,6 +383,8 @@ export class MailService {
       isInline: a.isInline ?? false,
       kind,
       textSupported: kind === 'file' && supportsExtraction(name, a.contentType),
+      // Readable at all, by extraction or by looking at it.
+      readable: kind === 'file' && (supportsExtraction(name, a.contentType) || isVisionReadable(name, a.contentType)),
       lastModifiedAt: a.lastModifiedDateTime ?? '',
     };
   }
@@ -392,31 +398,47 @@ export class MailService {
     return rows.map((row) => this.shapeAttachment(row));
   }
 
+  /**
+   * Download one attachment.
+   *
+   * Split out from reading it so the tool layer can fall back to looking at a
+   * page when there is no text on it. Keeping that decision above this service
+   * is deliberate: nothing here should reach for the paid model, because the
+   * same service backs the deterministic triage that runs on every change.
+   */
+  async attachmentBytes(input: {
+    messageId: string;
+    attachmentId: string;
+  }): Promise<{ attachment: MailAttachment; bytes: Uint8Array; contentType: string }> {
+    const metadata = await this.graph.request<GraphAttachment>(
+      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}`,
+      { query: { $select: 'id,name,contentType,size,isInline,lastModifiedDateTime' }, label: 'mail.attachment.metadata' },
+    );
+    const attachment = this.shapeAttachment(metadata);
+    if (!attachment.readable || attachment.kind !== 'file') {
+      throw new Error(`I cannot read ${attachment.name}. ${SUPPORTED_FORMATS_SENTENCE}`);
+    }
+    if (attachment.size > MAX_EXTERNAL_FILE_BYTES) {
+      throw new Error(`${attachment.name} is larger than the 5 MB inspection limit.`);
+    }
+    const file = await this.graph.requestBytes(
+      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`,
+      { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'mail.attachment.content' },
+    );
+    return { attachment, bytes: file.bytes, contentType: attachment.contentType || file.contentType };
+  }
+
   async readAttachmentText(input: {
     messageId: string;
     attachmentId: string;
     startCharacter?: number;
     maxCharacters?: number;
   }): Promise<MailAttachment & ExtractedDocument> {
-    const metadata = await this.graph.request<GraphAttachment>(
-      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}`,
-      { query: { $select: 'id,name,contentType,size,isInline,lastModifiedDateTime' }, label: 'mail.attachment.metadata' },
-    );
-    const attachment = this.shapeAttachment(metadata);
-    if (!attachment.textSupported || attachment.kind !== 'file') {
-      return Promise.reject(new Error(`I cannot read ${attachment.name}. ${SUPPORTED_FORMATS_SENTENCE}`));
-    }
-    if (attachment.size > MAX_EXTERNAL_FILE_BYTES) {
-      return Promise.reject(new Error(`${attachment.name} is larger than the 5 MB inspection limit.`));
-    }
-    const file = await this.graph.requestBytes(
-      `/me/messages/${encodeURIComponent(input.messageId)}/attachments/${encodeURIComponent(input.attachmentId)}/$value`,
-      { maxBytes: MAX_EXTERNAL_FILE_BYTES, label: 'mail.attachment.content' },
-    );
+    const { attachment, bytes, contentType } = await this.attachmentBytes(input);
     const extracted = await extractDocumentText({
-      bytes: file.bytes,
+      bytes,
       name: attachment.name,
-      contentType: attachment.contentType || file.contentType,
+      contentType,
       startCharacter: input.startCharacter,
       maxCharacters: input.maxCharacters,
     });

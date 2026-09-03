@@ -5,9 +5,26 @@ import type { ReasoningEffort } from './policy.js';
 
 export type ChatRole = 'system' | 'user' | 'assistant' | 'tool';
 
+/**
+ * A file handed to the model to look at.
+ *
+ * Used only where text extraction cannot help: a page that is a picture, or a
+ * PDF with no text layer. The bytes go to the provider as they are, because
+ * this runtime has no rasteriser: rendering a page ourselves needs a native
+ * canvas binary and Edge cannot load one.
+ */
+export interface ChatAttachment {
+  kind: 'image' | 'file';
+  /** A data URL. Images and PDFs only. */
+  dataUrl: string;
+  filename: string;
+}
+
 export interface ChatMessage {
   role: ChatRole;
   content: string;
+  /** Files the model should look at, alongside the text of this message. */
+  attachments?: ChatAttachment[];
   /** Present on assistant turns that asked for tools. */
   toolCalls?: ToolCallRequest[];
   /** Present on tool results. */
