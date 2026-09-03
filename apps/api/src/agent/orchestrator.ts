@@ -10,6 +10,7 @@ import { tryFastPath } from './fastpath.js';
 import {
   checkCapability,
   checkClaims,
+  checkFileHonesty,
   isActionRequest,
   isApprovalRevisionRequest,
   isDurableMemoryStatement,
@@ -385,6 +386,34 @@ export async function runAgent(input: AgentInput): Promise<AgentResult> {
             model: result.model,
             durationMs: Date.now() - started,
           };
+        }
+
+        // A refusal about a file has to be earned. Saying the attachment could
+        // not be read, in a turn where nothing opened it, is the same fault as
+        // claiming a send that never happened, and it teaches the Director
+        // that a capability she has does not work.
+        const fileHonesty = checkFileHonesty(raw, steps);
+        if (fileHonesty.offended) {
+          void recordTelemetry({
+            category: 'security', action: 'unearned_file_refusal', status: 'success', userId: ctx.user.id,
+            requestId: ctx.requestId, conversationId: ctx.conversationId, workflowId: ctx.workflowId,
+            model: result.model, modelRole: modelPolicy.role, responseMode: mode, reasonCode: 'file_refusal_without_read',
+          });
+          if (iteration < MAX_ITERATIONS) {
+            logger.warn({ iteration, reason: fileHonesty.reason }, 'Rejected a file refusal that nothing backs up');
+            messages.push({ role: 'assistant', content: raw });
+            messages.push({
+              role: 'system',
+              content:
+                'You told the Director you could not read a file, and in this turn you did not open one. ' +
+                'There is no upload and nothing for her to re-send: a file reaches you through her mailbox or her ' +
+                'OneDrive and SharePoint, and never from her directly. Find the message, list its attachments, and ' +
+                'read the supported one. PDF, Word, Excel and PowerPoint are all supported, and a long document is ' +
+                'paged, so continue from nextStartCharacter until you have what she asked for. ' +
+                'If a read genuinely fails, report the exact reason the tool gave and nothing else.',
+            });
+            continue;
+          }
         }
 
         // Last gate: never pass on a claim of action that nothing backs up.

@@ -16,6 +16,7 @@ export type TelemetryAction =
   | 'retrieved'
   | 'proposed'
   | 'false_action_blocked'
+  | 'unearned_file_refusal'
   | 'untrusted_content_warning'
   | 'generated'
   | 'assembled';
