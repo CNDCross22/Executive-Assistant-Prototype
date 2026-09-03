@@ -209,6 +209,68 @@ function anyWriteHappened(steps: AgentStep[]): boolean {
   return steps.some((s) => WRITE_TOOLS.has(s.tool) && s.status === 'success');
 }
 
+/**
+ * Tools that actually open a file. Nothing else can answer "what is in it".
+ */
+const FILE_READ_TOOLS = new Set([
+  'mail_read_attachment_text', 'onedrive_read_text', 'sharepoint_read_text',
+]);
+
+/**
+ * A refusal to read a file when nothing was ever opened.
+ *
+ * Asked to show the details in a PDF, the assistant answered that the
+ * attachment text had not been successfully retrieved, and the audit trail for
+ * that turn shows one model call and no tool calls at all. It had not tried.
+ * Reporting a failure that never happened is the same fault as reporting a
+ * success that never happened, and it is worse here because it teaches the
+ * Director that the capability does not work.
+ */
+const FILE_REFUSAL: RegExp[] = [
+  /\b(?:can(?:'|\u2019)?t|cannot|could ?not|couldn(?:'|\u2019)?t|unable to|not able to)\b[^.?!]{0,80}\b(?:read|open|see|show|access|extract|retrieve|display)\b[^.?!]{0,80}\b(?:file|attachment|pdf|document|spreadsheet|contents?)\b/i,
+  /\battachments?(?:'|\u2019)?s?\b[^.?!]{0,30}\b(?:text|content|contents)\b[^.?!]{0,50}\b(?:not|wasn(?:'|\u2019)?t|weren(?:'|\u2019)?t)\b[^.?!]{0,30}\b(?:retrieved|read|available|extracted)\b/i,
+  /\b(?:no access to|without access to|no way to read)\b[^.?!]{0,30}\b(?:file|attachment|pdf|document)\b/i,
+];
+
+/**
+ * An offer the product cannot honour.
+ *
+ * There is no upload. A file reaches the assistant through her mailbox or her
+ * files and nowhere else, so inviting her to send one is an instruction she
+ * cannot follow, and it reads as though she is the reason it failed.
+ */
+const IMPOSSIBLE_HANDOVER: RegExp[] = [
+  /\b(?:re-?send|resend|upload|attach)\b[^.?!]{0,60}\b(?:and|so)\b[^.?!]{0,20}\bi(?:'|\u2019)?(?:ll| will| can)\b/i,
+  /\bplease\s+(?:re-?send|resend|upload|attach)\b/i,
+  /\bif you (?:can |could |would )?(?:re-?send|resend|upload|attach)\b/i,
+];
+
+/** Did this turn actually open a file? */
+export function attemptedFileRead(steps: AgentStep[]): boolean {
+  return steps.some((step) => FILE_READ_TOOLS.has(step.tool));
+}
+
+export interface FileHonestyCheck {
+  offended: boolean;
+  reason?: string;
+}
+
+/**
+ * Catch a refusal about a file that no attempt supports, and any offer to
+ * accept an upload. Both are checked before the reply reaches the Director.
+ */
+export function checkFileHonesty(reply: string, steps: AgentStep[]): FileHonestyCheck {
+  const handover = IMPOSSIBLE_HANDOVER.find((pattern) => pattern.test(reply));
+  if (handover) return { offended: true, reason: `offered a handover the product cannot accept: ${handover.source.slice(0, 40)}` };
+
+  if (attemptedFileRead(steps)) return { offended: false };
+
+  const refusal = FILE_REFUSAL.find((pattern) => pattern.test(reply));
+  if (refusal) return { offended: true, reason: `refused to read a file without opening one: ${refusal.source.slice(0, 40)}` };
+
+  return { offended: false };
+}
+
 export interface ClaimCheck {
   blocked: boolean;
   reply: string;
